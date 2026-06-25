@@ -117,6 +117,33 @@ func WriteThumbnail(ctx context.Context, src, dst string, at float64) error {
 	return nil
 }
 
+// WriteProxy transcodes src into a compact "proxy" clip at dst: decimated to
+// the given fps, scaled to the given width and optionally grayscale, encoded
+// with H.264. This lets the heavy full decode happen locally (the file is on
+// disk here) so only a few-MB proxy travels the network to analysis services.
+func WriteProxy(ctx context.Context, src, dst string, fps float64, width int, gray bool) error {
+	vf := fmt.Sprintf("fps=%s,scale=%d:-2", strconv.FormatFloat(fps, 'g', -1, 64), width)
+	if gray {
+		vf += ",format=gray"
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-i", src,
+		"-vf", vf,
+		"-an",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+		"-pix_fmt", "yuv420p", // keep broadly decodable even when grayscale
+		"-movflags", "+faststart",
+		"-f", "mp4", // explicit: the temp output path has no .mp4 extension
+		dst,
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("run ffmpeg: %w: %s", err, out)
+	}
+	return nil
+}
+
 // ExtractFrame returns a full-resolution JPEG of the frame at the given
 // timestamp (seconds) without persisting anything to disk.
 func ExtractFrame(ctx context.Context, src string, at float64) ([]byte, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -255,6 +256,63 @@ func TestSetThumbnailIncomplete(t *testing.T) {
 	body := strings.NewReader(`{"t":3}`)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/uploads/p/thumbnail", body))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestProxyGeneratesAndCaches(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	srv, dir := newTestServer(t)
+
+	// Put a real video at the upload's data path and mark it complete.
+	id := "vid"
+	dataPath := filepath.Join(dir, id)
+	tmp := dataPath + ".src.mp4"
+	out, err := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i",
+		"testsrc=duration=2:size=640x480:rate=30", "-pix_fmt", "yuv420p", tmp).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffmpeg gen: %v\n%s", err, out)
+	}
+	if err := os.Rename(tmp, dataPath); err != nil {
+		t.Fatal(err)
+	}
+	size, _ := os.Stat(dataPath)
+	info := `{"ID":"` + id + `","Size":` + strconv.FormatInt(size.Size(), 10) +
+		`,"Offset":0,"SizeIsDeferred":false,"MetaData":{"filename":"c.mp4","filetype":"video/mp4"}}`
+	if err := os.WriteFile(filepath.Join(dir, id+".info"), []byte(info), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/uploads/"+id+"/proxy?fps=2&width=160", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("proxy status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "video/mp4" {
+		t.Errorf("content-type = %q", ct)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("empty proxy body")
+	}
+	// Proxy must be cached and smaller than the original.
+	proxyPath := filepath.Join(dir, id+".proxy_fps2_w160_g1.mp4")
+	pi, err := os.Stat(proxyPath)
+	if err != nil {
+		t.Fatalf("proxy not cached: %v", err)
+	}
+	if pi.Size() >= size.Size() {
+		t.Errorf("proxy (%d) not smaller than original (%d)", pi.Size(), size.Size())
+	}
+}
+
+func TestProxyIncomplete(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "p", 100, 50) // not complete
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/uploads/p/proxy", nil))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", rec.Code)
 	}

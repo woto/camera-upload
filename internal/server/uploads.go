@@ -238,6 +238,99 @@ func (s *Server) setThumbnail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "t": body.T})
 }
 
+const proxyTimeout = 30 * time.Minute
+
+// proxy serves a compact transcoded clip (decimated fps, downscaled, optional
+// grayscale) for analysis services so they don't pull the multi-GB original.
+// The proxy is generated on first request and cached per parameter set.
+func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	up, err := s.store.Get(id)
+	if err != nil {
+		s.notFoundOrError(w, err, "proxy")
+		return
+	}
+	if !up.Completed {
+		writeError(w, http.StatusConflict, "upload is not complete")
+		return
+	}
+
+	q := r.URL.Query()
+	fps := clampFloat(parseFloatDefault(q.Get("fps"), 4), 0.1, 60)
+	width := clampInt(atoiDefault(q.Get("width"), 480), 64, 1920)
+	gray := q.Get("gray") != "0" && q.Get("gray") != "false" // grayscale by default
+
+	dst := s.store.ProxyPath(id, fps, width, gray)
+
+	if _, err := os.Stat(dst); err != nil {
+		// Cache miss: generate (serialized per cache key so we transcode once).
+		unlock := s.proxyLocks.lock(dst)
+		defer unlock()
+		if _, err := os.Stat(dst); err != nil { // re-check after acquiring the lock
+			ctx, cancel := context.WithTimeout(context.Background(), proxyTimeout)
+			defer cancel()
+			tmp := dst + ".tmp"
+			if err := process.WriteProxy(ctx, s.store.DataPath(id), tmp, fps, width, gray); err != nil {
+				_ = os.Remove(tmp)
+				s.log.Error("build proxy", "id", id, "err", err)
+				writeError(w, http.StatusInternalServerError, "failed to build proxy")
+				return
+			}
+			if err := os.Rename(tmp, dst); err != nil {
+				_ = os.Remove(tmp)
+				s.log.Error("finalize proxy", "id", id, "err", err)
+				writeError(w, http.StatusInternalServerError, "failed to finalize proxy")
+				return
+			}
+		}
+	}
+
+	f, err := os.Open(dst)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "proxy unavailable")
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stat failed")
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	http.ServeContent(w, r, filepath.Base(dst), fi.ModTime(), f)
+}
+
+func parseFloatDefault(s string, def float64) float64 {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func parseTime(s string) float64 {
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil || v < 0 {

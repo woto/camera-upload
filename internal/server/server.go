@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -19,9 +20,32 @@ import (
 
 // Server holds the dependencies shared by the HTTP handlers.
 type Server struct {
-	cfg   config.Config
-	store *store.Store
-	log   *slog.Logger
+	cfg        config.Config
+	store      *store.Store
+	log        *slog.Logger
+	proxyLocks keyedMutex
+}
+
+// keyedMutex serializes work per key (used so concurrent requests for the same
+// proxy don't transcode it more than once).
+type keyedMutex struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}
+
+func (k *keyedMutex) lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = map[string]*sync.Mutex{}
+	}
+	l, ok := k.m[key]
+	if !ok {
+		l = &sync.Mutex{}
+		k.m[key] = l
+	}
+	k.mu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 // New builds the chi router wiring together the management API, the embedded
@@ -46,6 +70,7 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 		r.Delete("/{id}", s.deleteUpload)
 		r.Get("/{id}/download", s.downloadUpload)
 		r.Get("/{id}/frame", s.frame)
+		r.Get("/{id}/proxy", s.proxy)
 		r.Get("/{id}/thumbnail", s.thumbnail)
 		r.Post("/{id}/thumbnail", s.setThumbnail)
 	})

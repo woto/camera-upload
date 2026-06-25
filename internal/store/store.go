@@ -83,6 +83,17 @@ func (s *Store) ThumbPath(id string) string { return filepath.Join(s.dir, id+".j
 // UserPath returns the path to the user-editable metadata sidecar (title/tags).
 func (s *Store) UserPath(id string) string { return filepath.Join(s.dir, id+".user.json") }
 
+// ProxyPath returns the cache path for a transcoded proxy with the given
+// parameters. Each distinct parameter set is cached separately.
+func (s *Store) ProxyPath(id string, fps float64, width int, gray bool) string {
+	g := 0
+	if gray {
+		g = 1
+	}
+	name := fmt.Sprintf("%s.proxy_fps%s_w%d_g%d.mp4", id, strconv.FormatFloat(fps, 'g', -1, 64), width, g)
+	return filepath.Join(s.dir, name)
+}
+
 // List returns every upload found in the data directory, newest first.
 func (s *Store) List() ([]Upload, error) {
 	entries, err := os.ReadDir(s.dir)
@@ -272,8 +283,13 @@ func (s *Store) Delete(id string) error {
 	if _, err := os.Stat(s.InfoPath(id)); errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
+	paths := []string{s.DataPath(id), s.InfoPath(id), s.MetaPath(id), s.ThumbPath(id), s.UserPath(id)}
+	// Proxy caches have parameter-dependent names, so collect them by glob.
+	if proxies, err := filepath.Glob(filepath.Join(s.dir, id+".proxy_*.mp4")); err == nil {
+		paths = append(paths, proxies...)
+	}
 	var firstErr error
-	for _, p := range []string{s.DataPath(id), s.InfoPath(id), s.MetaPath(id), s.ThumbPath(id), s.UserPath(id)} {
+	for _, p := range paths {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
 			firstErr = err
 		}
