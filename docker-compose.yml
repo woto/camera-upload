@@ -1,0 +1,38 @@
+services:
+  camera-upload:
+    build:
+      context: .
+    image: camera-upload
+    container_name: camera_upload
+    restart: always
+
+    environment:
+      # Maximum size of a single upload (bytes). Default 10 GiB.
+      MAX_UPLOAD_SIZE: "10737418240"
+      # How long unfinished uploads are kept before cleanup.
+      INCOMPLETE_TTL: "24h"
+      THUMBNAILS: "true"
+
+    volumes:
+      - uploads:/data
+
+    labels:
+      - "traefik.enable=true"
+
+      # Resumable video upload service.
+      - "traefik.http.routers.camera-upload.rule=Host(`upload.volleycam.com`)"
+      - "traefik.http.routers.camera-upload.entrypoints=websecure"
+      - "traefik.http.routers.camera-upload.tls.certresolver=production"
+
+      # Allow large request bodies for multi-GB chunked uploads.
+      - "traefik.http.services.camera-upload.loadbalancer.server.port=8000"
+
+    networks:
+      - traefik
+
+volumes:
+  uploads:
+
+networks:
+  traefik:
+    external: true

@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Upload</title>
+  <link href="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.css" rel="stylesheet" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
+    header { background: #1f2937; color: #fff; padding: 16px 24px; }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 4px 0 0; color: #9ca3af; font-size: 13px; }
+    main { max-width: 1040px; margin: 24px auto; padding: 0 16px; display: grid; gap: 24px; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 16px; }
+    .card h2 { margin: 0 0 12px; font-size: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    .bar { background: #e5e7eb; border-radius: 6px; height: 10px; width: 120px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: #2563eb; transition: width .3s; }
+    .thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 4px; background: #e5e7eb; display: block; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+    .badge.done { background: #dcfce7; color: #166534; }
+    .badge.progress { background: #fef9c3; color: #854d0e; }
+    a.btn, button.btn { font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid #d1d5db;
+      background: #fff; cursor: pointer; text-decoration: none; color: #1f2937; display: inline-block; margin: 1px 0; }
+    button.btn.danger { color: #b91c1c; border-color: #fecaca; }
+    button.btn.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+    .muted { color: #9ca3af; font-size: 12px; }
+    .title-input { width: 100%; font-size: 14px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+    .title-label { cursor: text; display: inline-block; font-size: 14px; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; min-width: 80px; }
+    .title-label:hover { border-color: #e5e7eb; background: #f9fafb; }
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .tag { background: #eef2ff; color: #3730a3; border-radius: 10px; padding: 2px 8px; font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
+    .tag button { border: none; background: none; cursor: pointer; color: #6366f1; font-size: 12px; padding: 0; }
+    .tag-input { width: 90px; font-size: 12px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+    .picker { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    .picker img { max-width: 100%; border-radius: 6px; display: block; margin: 8px 0; max-height: 320px; }
+    .picker .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .picker .picker-head { justify-content: space-between; }
+    .picker input[type=range] { flex: 1; min-width: 200px; }
+    .url-box { flex: 1; min-width: 200px; font-size: 12px; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; }
+    .actions { white-space: nowrap; }
+    .filterbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .filterbar #search { max-width: 280px; }
+    .filter-tag { cursor: pointer; user-select: none; background: #eef2ff; color: #3730a3; border-radius: 10px; padding: 2px 10px; font-size: 12px; border: 1px solid transparent; }
+    .filter-tag.active { background: #3730a3; color: #fff; }
+    .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; font-size: 13px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Video Upload</h1>
+    <p>Resumable uploads of large files (tus) · drag &amp; drop or pick a file</p>
+  </header>
+
+  <main>
+    <div class="card">
+      <div id="uppy"></div>
+    </div>
+
+    <div class="card">
+      <h2>Uploads</h2>
+      <div class="filterbar">
+        <input id="search" class="title-input" placeholder="Search by name…" />
+        <div id="tag-filters" class="tags"></div>
+      </div>
+      <div id="uploads"><p class="muted">Loading…</p></div>
+      <div id="pager" class="pager"></div>
+    </div>
+  </main>
+
+  <datalist id="all-tags"></datalist>
+
+  <script src="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.js"></script>
+  <script>
+    const TUS_ENDPOINT = '/files/';
+
+    const uppy = new Uppy.Uppy({
+      autoProceed: false,
+      restrictions: { allowedFileTypes: ['video/*'] },
+    })
+      .use(Uppy.Dashboard, {
+        inline: true,
+        target: '#uppy',
+        height: 320,
+        proudlyDisplayPoweredByUppy: false,
+        note: 'Video only. Uploads resume automatically after a dropped connection.',
+      })
+      .use(Uppy.Tus, {
+        endpoint: TUS_ENDPOINT,
+        chunkSize: 50 * 1024 * 1024, // 50 MiB
+        retryDelays: [0, 1000, 3000, 5000, 10000],
+        removeFingerprintOnSuccess: true,
+      })
+      .use(Uppy.GoldenRetriever);
+
+    // After an upload finishes, the server still needs a moment to run ffprobe
+    // and generate the thumbnail. Poll a few times in quick succession so the
+    // thumbnail appears almost immediately instead of waiting for the next
+    // 3-second tick.
+    function refreshBurst() { [300, 800, 1500, 2500, 4000].forEach(ms => setTimeout(refresh, ms)); }
+    uppy.on('complete', refreshBurst);
+    uppy.on('upload-success', refreshBurst);
+
+    // ---------- helpers ----------
+    const uploadsEl = document.getElementById('uploads');
+    const tagsDatalist = document.getElementById('all-tags');
+    let rowState = {};   // id -> { title, tags } (reflects in-progress edits)
+    let renderedIds = '';
+
+    function fmtSize(bytes) {
+      if (!bytes) return '—';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let i = 0, n = bytes;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return n.toFixed(1) + ' ' + units[i];
+    }
+    function fmtTime(s) {
+      s = Math.max(0, Math.floor(s));
+      const m = Math.floor(s / 60), sec = s % 60;
+      return m + ':' + String(sec).padStart(2, '0');
+    }
+    function esc(s) {
+      return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+    async function api(method, url, body) {
+      const opts = { method };
+      if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
+      return fetch(url, opts);
+    }
+    async function saveMeta(id) {
+      const st = rowState[id];
+      await api('PATCH', '/uploads/' + id, { title: st.title, tags: st.tags });
+      loadTags();
+    }
+
+    // ---------- full render ----------
+    function render(uploads) {
+      if (!uploads.length) {
+        uploadsEl.innerHTML = '<p class="muted">No uploads yet.</p>';
+        return;
+      }
+      const rows = uploads.map(u => {
+        const thumb = u.has_thumbnail
+          ? '<img class="thumb" src="/uploads/' + u.id + '/thumbnail?ts=' + Date.now() + '" alt="" />'
+          : '<div class="thumb"></div>';
+        const dl = u.completed ? '<a class="btn" href="/uploads/' + u.id + '/download">Download</a>' : '';
+        const frameBtn = u.completed ? '<button class="btn" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
+        // Absolute video URL to hand to the motion-analysis service (it pulls via Range).
+        const copyVid = u.completed ? '<button class="btn" data-act="copyvid" data-id="' + u.id + '" title="Copy video URL for the analysis service">Copy URL</button>' : '';
+        return '' +
+          '<tr data-row="' + u.id + '">' +
+            '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
+            '<td style="min-width:200px">' +
+              '<div data-titlecell="' + u.id + '">' + titleLabelHTML(u.id) + '</div>' +
+              '<div class="muted">' + esc(u.filename || u.id) + ' · ' + fmtSize(u.size) +
+                (u.duration ? ' · ' + fmtTime(u.duration) : '') + '</div>' +
+            '</td>' +
+            '<td style="min-width:180px"><div class="tags" data-tags="' + u.id + '"></div></td>' +
+            '<td><div class="bar"><span data-bar="' + u.id + '" style="width:' + u.percent.toFixed(1) + '%"></span></div></td>' +
+            '<td data-status="' + u.id + '"></td>' +
+            '<td class="actions">' + dl + ' ' + frameBtn + ' ' + copyVid +
+              ' <button class="btn danger" data-act="delete" data-id="' + u.id + '">Delete</button></td>' +
+          '</tr>' +
+          '<tr data-picker-row="' + u.id + '" style="display:none"><td colspan="6"><div data-picker="' + u.id + '"></div></td></tr>';
+      }).join('');
+
+      uploadsEl.innerHTML =
+        '<table><thead><tr><th></th><th>Title</th><th>Tags</th><th>Progress</th><th>Status</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>';
+
+      uploads.forEach(u => { updateStatus(u); renderTags(u.id); });
+      bindActions();
+    }
+
+    function updateStatus(u) {
+      const bar = uploadsEl.querySelector('[data-bar="' + u.id + '"]');
+      const st = uploadsEl.querySelector('[data-status="' + u.id + '"]');
+      if (bar) bar.style.width = u.percent.toFixed(1) + '%';
+      if (st) st.innerHTML = u.completed
+        ? '<span class="badge done">ready</span>'
+        : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
+      // The thumbnail is generated server-side only after the upload finishes.
+      // Since a completing upload does not change the row set (no full re-render),
+      // insert the image here once it becomes available.
+      const cell = uploadsEl.querySelector('[data-thumbcell="' + u.id + '"]');
+      if (cell && u.has_thumbnail && !cell.querySelector('img')) {
+        cell.innerHTML = '<img class="thumb" src="/uploads/' + u.id + '/thumbnail?ts=' + Date.now() + '" alt="" />';
+      }
+    }
+
+    function renderTags(id) {
+      const box = uploadsEl.querySelector('[data-tags="' + id + '"]');
+      if (!box) return;
+      const tags = rowState[id].tags;
+      box.innerHTML = tags.map((t, i) =>
+        '<span class="tag">' + esc(t) + '<button data-act="untag" data-id="' + id + '" data-i="' + i + '">×</button></span>'
+      ).join('') +
+        '<input class="tag-input" list="all-tags" data-act="addtag" data-id="' + id + '" placeholder="+ tag" />';
+      box.querySelector('[data-act="untag"]') && box.querySelectorAll('[data-act="untag"]').forEach(b => {
+        b.onclick = () => { rowState[id].tags.splice(+b.dataset.i, 1); renderTags(id); saveMeta(id); };
+      });
+      const input = box.querySelector('[data-act="addtag"]');
+      input.onkeydown = e => {
+        if (e.key !== 'Enter') return;
+        const val = input.value.trim();
+        input.value = '';
+        if (!val) return;
+        // Ignore duplicates (e.g. picking an existing tag again).
+        if (rowState[id].tags.includes(val)) { renderTags(id); return; }
+        rowState[id].tags.push(val);
+        renderTags(id);
+        saveMeta(id);
+      };
+    }
+
+    function bindActions() {
+      uploadsEl.querySelectorAll('[data-act="delete"]').forEach(b => {
+        b.onclick = async () => {
+          const id = b.dataset.id;
+          const u = currentUploads.find(x => x.id === id) || {};
+          const name = (rowState[id] && rowState[id].title) || u.filename || id;
+          if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;
+          await api('DELETE', '/uploads/' + id);
+          delete rowState[id];
+          refresh(true);
+        };
+      });
+      uploadsEl.querySelectorAll('[data-act="titlelabel"]').forEach(el => {
+        el.onclick = () => editTitle(el.dataset.id);
+      });
+      uploadsEl.querySelectorAll('[data-act="frame"]').forEach(b => {
+        b.onclick = () => togglePicker(b.dataset.id);
+      });
+      uploadsEl.querySelectorAll('[data-act="copyvid"]').forEach(b => {
+        b.onclick = async () => {
+          const url = location.origin + '/uploads/' + b.dataset.id + '/download';
+          try {
+            await navigator.clipboard.writeText(url);
+            const old = b.textContent; b.textContent = 'Copied!';
+            setTimeout(() => { b.textContent = old; }, 1200);
+          } catch (e) { prompt('Video URL:', url); }
+        };
+      });
+    }
+
+    // ---------- title: label that becomes an input on click ----------
+    function titleLabelHTML(id) {
+      const t = (rowState[id] && rowState[id].title) || '';
+      const inner = t ? esc(t) : '<span class="muted">Add title…</span>';
+      return '<span class="title-label" data-act="titlelabel" data-id="' + id + '">' + inner + '</span>';
+    }
+    function restoreLabel(id) {
+      const cell = uploadsEl.querySelector('[data-titlecell="' + id + '"]');
+      if (!cell) return;
+      cell.innerHTML = titleLabelHTML(id);
+      const lbl = cell.querySelector('[data-act="titlelabel"]');
+      if (lbl) lbl.onclick = () => editTitle(id);
+    }
+    function editTitle(id) {
+      const cell = uploadsEl.querySelector('[data-titlecell="' + id + '"]');
+      if (!cell) return;
+      const u = currentUploads.find(x => x.id === id) || {};
+      const current = (rowState[id] && rowState[id].title) || '';
+      cell.innerHTML = '<input class="title-input" value="' + esc(current) + '" placeholder="' + esc(u.filename || id) + '" />';
+      const input = cell.querySelector('input');
+      input.focus();
+      input.select();
+      let saved = false;
+      input.onkeydown = e => {
+        if (e.key === 'Enter') {
+          saved = true;
+          rowState[id].title = input.value.trim();
+          saveMeta(id);
+          restoreLabel(id);
+        } else if (e.key === 'Escape') {
+          restoreLabel(id);
+        }
+      };
+      // Losing focus without pressing Enter discards the edit.
+      input.onblur = () => { if (!saved) restoreLabel(id); };
+    }
+
+    // ---------- frame picker ----------
+    let pickerOpen = {};
+    function togglePicker(id) {
+      const row = uploadsEl.querySelector('[data-picker-row="' + id + '"]');
+      const box = uploadsEl.querySelector('[data-picker="' + id + '"]');
+      pickerOpen[id] = !pickerOpen[id];
+      row.style.display = pickerOpen[id] ? '' : 'none';
+      if (!pickerOpen[id]) { box.innerHTML = ''; return; }
+
+      const up = currentUploads.find(u => u.id === id);
+      const dur = up && up.duration ? up.duration : 10;
+      // If a thumbnail was saved from a specific time, reopen the picker there.
+      let start = Math.min(1, dur / 2);
+      if (up && up.thumbnail_t != null) start = Math.max(0, Math.min(up.thumbnail_t, dur));
+      box.innerHTML =
+        '<div class="picker">' +
+          '<div class="row picker-head"><b>Frame</b>' +
+            '<button class="btn" data-closepicker="' + id + '">Close ✕</button></div>' +
+          '<div class="row"><label>Time: <b data-t="' + id + '">' + start.toFixed(1) + 's</b></label>' +
+          '<input type="range" min="0" max="' + dur.toFixed(1) + '" step="0.1" value="' + start + '" data-slider="' + id + '" /></div>' +
+          '<img data-preview="' + id + '" src="/uploads/' + id + '/frame?t=' + start + '" alt="frame preview" />' +
+          '<div class="row">' +
+            '<button class="btn primary" data-setthumb="' + id + '">Set as thumbnail</button>' +
+          '</div>' +
+          '<div class="row">' +
+            '<input class="url-box" data-urlbox="' + id + '" readonly value="' + frameUrl(id, start) + '" />' +
+            '<button class="btn" data-copyurl="' + id + '">Copy</button>' +
+          '</div>' +
+        '</div>';
+
+      box.querySelector('[data-closepicker="' + id + '"]').onclick = () => togglePicker(id);
+
+      const slider = box.querySelector('[data-slider="' + id + '"]');
+      const tLabel = box.querySelector('[data-t="' + id + '"]');
+      const preview = box.querySelector('[data-preview="' + id + '"]');
+      const urlbox = box.querySelector('[data-urlbox="' + id + '"]');
+      let timer = null;
+      slider.oninput = () => {
+        const t = parseFloat(slider.value);
+        tLabel.textContent = t.toFixed(1) + 's';
+        urlbox.value = frameUrl(id, t);
+        clearTimeout(timer);
+        timer = setTimeout(() => { preview.src = '/uploads/' + id + '/frame?t=' + t; }, 250);
+      };
+      box.querySelector('[data-setthumb="' + id + '"]').onclick = async () => {
+        const t = parseFloat(slider.value);
+        await api('POST', '/uploads/' + id + '/thumbnail', { t });
+        refresh(true);
+      };
+      box.querySelector('[data-copyurl="' + id + '"]').onclick = async () => {
+        try { await navigator.clipboard.writeText(urlbox.value); urlbox.select(); } catch (e) { urlbox.select(); }
+      };
+    }
+    function frameUrl(id, t) {
+      return location.origin + '/uploads/' + id + '/frame?t=' + t;
+    }
+
+    // ---------- filtering & pagination ----------
+    const searchEl = document.getElementById('search');
+    const tagFiltersEl = document.getElementById('tag-filters');
+    const pagerEl = document.getElementById('pager');
+    let allTags = [];
+    const filter = { q: '', tags: new Set(), page: 1, pageSize: 20 };
+    let pageInfo = { total: 0, page: 1, pages: 1 };
+
+    function buildQuery() {
+      const p = new URLSearchParams();
+      if (filter.q) p.set('q', filter.q);
+      filter.tags.forEach(t => p.append('tag', t));
+      p.set('page', filter.page);
+      p.set('page_size', filter.pageSize);
+      return p.toString();
+    }
+
+    function renderTagFilters() {
+      tagFiltersEl.innerHTML = allTags.map(t =>
+        '<span class="filter-tag' + (filter.tags.has(t) ? ' active' : '') + '" data-ftag="' + esc(t) + '">' + esc(t) + '</span>'
+      ).join('');
+      tagFiltersEl.querySelectorAll('[data-ftag]').forEach(el => {
+        el.onclick = () => {
+          const t = el.dataset.ftag;
+          filter.tags.has(t) ? filter.tags.delete(t) : filter.tags.add(t);
+          filter.page = 1;
+          renderTagFilters();
+          refresh(true);
+        };
+      });
+    }
+
+    function renderPager() {
+      const { total, page, pages } = pageInfo;
+      if (total === 0) { pagerEl.innerHTML = ''; return; }
+      pagerEl.innerHTML =
+        '<button class="btn" data-pg="prev"' + (page <= 1 ? ' disabled' : '') + '>‹ Prev</button>' +
+        '<span>Page ' + page + ' of ' + Math.max(pages, 1) + ' · ' + total + ' total</span>' +
+        '<button class="btn" data-pg="next"' + (page >= pages ? ' disabled' : '') + '>Next ›</button>';
+      const prev = pagerEl.querySelector('[data-pg="prev"]');
+      const next = pagerEl.querySelector('[data-pg="next"]');
+      if (prev) prev.onclick = () => { if (filter.page > 1) { filter.page--; refresh(true); } };
+      if (next) next.onclick = () => { if (filter.page < pages) { filter.page++; refresh(true); } };
+    }
+
+    let searchTimer = null;
+    searchEl.oninput = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        filter.q = searchEl.value.trim();
+        filter.page = 1;
+        refresh(true);
+      }, 300);
+    };
+
+    // ---------- polling ----------
+    let currentUploads = [];
+    async function refresh(force) {
+      try {
+        const res = await fetch('/uploads?' + buildQuery());
+        const data = await res.json();
+        const uploads = data.uploads || [];
+        currentUploads = uploads;
+        pageInfo = { total: data.total || 0, page: data.page || 1, pages: data.pages || 1 };
+        // Initialize edit state for new uploads without clobbering ongoing edits.
+        uploads.forEach(u => {
+          if (!rowState[u.id]) rowState[u.id] = { title: u.title, tags: (u.tags || []).slice() };
+        });
+        const ids = uploads.map(u => u.id).join(',');
+        if (force || ids !== renderedIds) {
+          renderedIds = ids;
+          render(uploads);
+        } else {
+          uploads.forEach(updateStatus);
+        }
+        renderPager();
+      } catch (e) {
+        uploadsEl.innerHTML = '<p class="muted">Failed to load uploads.</p>';
+      }
+    }
+    async function loadTags() {
+      try {
+        const res = await fetch('/tags');
+        const data = await res.json();
+        allTags = data.tags || [];
+        tagsDatalist.innerHTML = allTags.map(t => '<option value="' + esc(t) + '">').join('');
+        // Drop any selected filter tags that no longer exist.
+        filter.tags.forEach(t => { if (!allTags.includes(t)) filter.tags.delete(t); });
+        renderTagFilters();
+      } catch (e) {}
+    }
+
+    loadTags();
+    refresh(true);
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>
