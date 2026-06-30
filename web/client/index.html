@@ -30,8 +30,8 @@
     /* Semantic, colour-coded actions (filled so the intent reads at a glance). */
     button.btn.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
     button.btn.primary:hover { background: #1d4ed8; }
-    button.btn.frame, button.btn.export { color: #fff; background: #4f46e5; border-color: #4f46e5; }
-    button.btn.frame:hover, button.btn.export:hover { background: #4338ca; }
+    button.btn.frame, button.btn.export, button.btn.fisheye { color: #fff; background: #4f46e5; border-color: #4f46e5; }
+    button.btn.frame:hover, button.btn.export:hover, button.btn.fisheye:hover { background: #4338ca; }
     button.btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }  /* delete → red */
     button.btn.danger:hover { background: #b91c1c; }
     button.btn.close { color: #fff; background: #9ca3af; border-color: #9ca3af; }   /* close panel → grey */
@@ -178,7 +178,7 @@
         // Export panel: download original + build a configurable proxy URL for camera-motion.
         const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Export</button>' : '';
         // Open the frame in camera-fisheye to tune lens-distortion correction for this video.
-        const fisheyeBtn = u.completed && CAMERA_FISHEYE_URL ? '<button class="btn" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
+        const fisheyeBtn = u.completed && CAMERA_FISHEYE_URL ? '<button class="btn fisheye" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
         return '' +
           '<tr data-row="' + u.id + '">' +
             '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
