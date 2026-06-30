@@ -205,23 +205,35 @@
       bindActions();
     }
 
-    // Ask camera-fisheye which videos already have a saved perspective, and show a
-    // present/absent badge per row. Degrades silently if the service is unreachable.
+    // Cached presence map {id: bool} from camera-fisheye, so the 3s status poll can
+    // re-render the badge from cache without clobbering it or re-fetching.
+    let perspectivePresent = {};
+
+    function perspBadgeHTML(id) {
+      if (perspectivePresent[id] === true) return '<span class="badge done">perspective</span>';
+      if (perspectivePresent[id] === false) return '<span class="badge absent">no perspective</span>';
+      return '';
+    }
+
+    // Ask camera-fisheye which videos already have a saved perspective, update the
+    // cache and the rendered badges. Degrades silently if the service is unreachable.
     async function refreshPerspectiveBadges(uploads) {
       if (!CAMERA_FISHEYE_URL) return;
       const ids = uploads.filter(u => u.completed).map(u => u.id);
       if (!ids.length) return;
-      let present = {};
       try {
-        present = await (await fetch(CAMERA_FISHEYE_URL + '/perspectives?ids=' + encodeURIComponent(ids.join(',')))).json();
+        const present = await (await fetch(CAMERA_FISHEYE_URL + '/perspectives?ids=' + encodeURIComponent(ids.join(',')))).json();
+        Object.assign(perspectivePresent, present);
       } catch (e) { return; }
       ids.forEach(id => {
         const el = uploadsEl.querySelector('[data-persp="' + id + '"]');
-        if (el) el.innerHTML = present[id]
-          ? '<span class="badge done">perspective</span>'
-          : '<span class="badge absent">no perspective</span>';
+        if (el) el.innerHTML = perspBadgeHTML(id);
       });
     }
+
+    // Re-check perspectives when the tab regains focus (e.g. after saving in the
+    // camera-fisheye tab), so the badge updates without a full page reload.
+    window.addEventListener('focus', () => refreshPerspectiveBadges(currentUploads));
 
     // Open camera-fisheye for a video, handing it the video id and a frame URL.
     function openFisheye(id) {
@@ -238,7 +250,7 @@
       const st = uploadsEl.querySelector('[data-status="' + u.id + '"]');
       if (bar) bar.style.width = u.percent.toFixed(1) + '%';
       if (st) st.innerHTML = u.completed
-        ? '<span class="badge done">ready</span> <span data-persp="' + u.id + '"></span>'
+        ? '<span class="badge done">ready</span> <span data-persp="' + u.id + '">' + perspBadgeHTML(u.id) + '</span>'
         : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
       // The thumbnail is generated server-side only after the upload finishes.
       // Since a completing upload does not change the row set (no full re-render),
