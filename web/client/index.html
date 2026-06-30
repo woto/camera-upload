@@ -20,6 +20,7 @@
     .bar > span { display: block; height: 100%; background: #2563eb; transition: width .3s; }
     .thumb { width: 192px; height: 108px; object-fit: cover; border-radius: 4px; background: #e5e7eb; display: block; }
     .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .status-badges { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .badge.done { background: #dcfce7; color: #166534; }
     .badge.progress { background: #fef9c3; color: #854d0e; }
     .badge.absent { background: #e5e7eb; color: #6b7280; }
@@ -250,7 +251,7 @@
       const st = uploadsEl.querySelector('[data-status="' + u.id + '"]');
       if (bar) bar.style.width = u.percent.toFixed(1) + '%';
       if (st) st.innerHTML = u.completed
-        ? '<span class="badge done">ready</span> <span data-persp="' + u.id + '">' + perspBadgeHTML(u.id) + '</span>'
+        ? '<div class="status-badges"><span class="badge done">ready</span><span data-persp="' + u.id + '">' + perspBadgeHTML(u.id) + '</span></div>'
         : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
       // The thumbnail is generated server-side only after the upload finishes.
       // Since a completing upload does not change the row set (no full re-render),
