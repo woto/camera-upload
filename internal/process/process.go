@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tus/tusd/v2/pkg/handler"
@@ -138,6 +139,9 @@ func WriteProxy(ctx context.Context, src, dst string, fps float64, width int, gr
 		dst,
 	}
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	// Kill this (long-running) ffmpeg if the server process dies, so a restart
+	// can't leave an orphan still writing the output.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("run ffmpeg: %w: %s", err, out)
 	}

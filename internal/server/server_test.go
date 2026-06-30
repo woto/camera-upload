@@ -68,6 +68,142 @@ func TestClientServed(t *testing.T) {
 	}
 }
 
+func TestClientInjectsCameraMotionURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraMotionURL: "http://motion.example:7000"}
+	st := store.New(dir)
+	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(cfg, st, tusStub, log)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "http://motion.example:7000") {
+		t.Errorf("served client does not contain the configured camera-motion URL")
+	}
+	if strings.Contains(body, "__CAMERA_MOTION_URL__") {
+		t.Errorf("served client still contains the unreplaced placeholder")
+	}
+}
+
+func TestClientInjectsCameraFisheyeURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraFisheyeURL: "http://fisheye.example:7400"}
+	st := store.New(dir)
+	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(cfg, st, tusStub, log)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "http://fisheye.example:7400") {
+		t.Errorf("served client does not contain the configured camera-fisheye URL")
+	}
+	if strings.Contains(body, "__CAMERA_FISHEYE_URL__") {
+		t.Errorf("served client still contains the unreplaced placeholder")
+	}
+}
+
+func doReq(srv http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, path, nil)
+	} else {
+		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, r)
+	return rec
+}
+
+func TestExportRecordsCRUD(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+
+	rec := doReq(srv, http.MethodPost, "/uploads/vid1/exports", `{"fps":4,"width":480,"gray":true}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+	var created store.ExportConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.ID == "" || created.FPS != 4 {
+		t.Fatalf("unexpected created record: %+v", created)
+	}
+
+	rec = doReq(srv, http.MethodGet, "/uploads/vid1/exports", "")
+	var listResp struct {
+		Exports []store.ExportConfig `json:"exports"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &listResp)
+	if len(listResp.Exports) != 1 || listResp.Exports[0].ID != created.ID {
+		t.Fatalf("unexpected list: %+v", listResp.Exports)
+	}
+
+	rec = doReq(srv, http.MethodPut, "/uploads/vid1/exports/"+created.ID, `{"fps":8,"width":640,"gray":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d", rec.Code)
+	}
+	var updated store.ExportConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &updated)
+	if updated.ID != created.ID || updated.FPS != 8 || updated.Width != 640 {
+		t.Fatalf("update not applied: %+v", updated)
+	}
+
+	rec = doReq(srv, http.MethodDelete, "/uploads/vid1/exports/"+created.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d", rec.Code)
+	}
+	var del struct {
+		Deleted bool `json:"deleted"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &del)
+	if !del.Deleted {
+		t.Errorf("expected deleted=true")
+	}
+
+	rec = doReq(srv, http.MethodGet, "/uploads/vid1/exports", "")
+	_ = json.Unmarshal(rec.Body.Bytes(), &listResp)
+	if len(listResp.Exports) != 0 {
+		t.Errorf("expected empty after delete, got %+v", listResp.Exports)
+	}
+}
+
+func TestGetSingleExport(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+
+	rec := doReq(srv, http.MethodPost, "/uploads/vid1/exports", `{"fps":8,"width":640,"gray":false}`)
+	var created store.ExportConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	rec = doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+created.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get existing: status = %d", rec.Code)
+	}
+	var got store.ExportConfig
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.ID != created.ID || got.FPS != 8 {
+		t.Errorf("unexpected record: %+v", got)
+	}
+
+	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/nope", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("get missing record: status = %d", rec.Code)
+	}
+}
+
+func TestExportsUnknownUpload(t *testing.T) {
+	srv, _ := newTestServer(t)
+	if rec := doReq(srv, http.MethodGet, "/uploads/missing/exports", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("GET unknown: status = %d", rec.Code)
+	}
+	if rec := doReq(srv, http.MethodPost, "/uploads/missing/exports", `{}`); rec.Code != http.StatusNotFound {
+		t.Errorf("POST unknown: status = %d", rec.Code)
+	}
+}
+
 func TestListAndGetUpload(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "abc", 100, 50)

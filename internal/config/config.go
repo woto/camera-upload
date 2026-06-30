@@ -22,17 +22,26 @@ type Config struct {
 	Thumbnails bool
 	// IncompleteTTL is how long an unfinished upload may live before cleanup removes it.
 	IncompleteTTL time.Duration
+	// CameraMotionURL is the base URL of the camera-motion service, injected into
+	// the client so the "Open in camera-motion" button can prefill a proxy URL.
+	CameraMotionURL string
+	// CameraFisheyeURL is the base URL of the camera-fisheye service, injected into
+	// the client so the "Fisheye" button can open it and the row can show a
+	// perspective badge.
+	CameraFisheyeURL string
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:          ":" + getenv("PORT", "8000"),
-		DataDir:       getenv("DATA_DIR", "./data"),
-		BasePath:      getenv("BASE_PATH", "/files/"),
-		MaxUploadSize: 10 << 30, // 10 GiB
-		Thumbnails:    getenvBool("THUMBNAILS", true),
-		IncompleteTTL: 24 * time.Hour,
+		Addr:             ":" + getenv("PORT", "8000"),
+		DataDir:          getenv("DATA_DIR", "./data"),
+		BasePath:         getenv("BASE_PATH", "/files/"),
+		MaxUploadSize:    10 << 30, // 10 GiB
+		Thumbnails:       getenvBool("THUMBNAILS", true),
+		IncompleteTTL:    24 * time.Hour,
+		CameraMotionURL:  getenv("CAMERA_MOTION_URL", "http://127.0.0.1:8100"),
+		CameraFisheyeURL: getenv("CAMERA_FISHEYE_URL", "http://127.0.0.1:8400"),
 	}
 
 	if v := os.Getenv("MAX_UPLOAD_SIZE"); v != "" {

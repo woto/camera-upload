@@ -73,6 +73,11 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 		r.Get("/{id}/proxy", s.proxy)
 		r.Get("/{id}/thumbnail", s.thumbnail)
 		r.Post("/{id}/thumbnail", s.setThumbnail)
+		r.Get("/{id}/exports", s.listExports)
+		r.Get("/{id}/exports/{exportId}", s.getExport)
+		r.Post("/{id}/exports", s.createExport)
+		r.Put("/{id}/exports/{exportId}", s.updateExport)
+		r.Delete("/{id}/exports/{exportId}", s.deleteExport)
 	})
 
 	// Mount the tusd handler at the configured base path. tusd strips the base
@@ -85,7 +90,9 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 
 func (s *Server) client(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(web.ClientHTML)
+	html := strings.Replace(string(web.ClientHTML), "__CAMERA_MOTION_URL__", s.cfg.CameraMotionURL, 1)
+	html = strings.Replace(html, "__CAMERA_FISHEYE_URL__", s.cfg.CameraFisheyeURL, 1)
+	_, _ = w.Write([]byte(html))
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -162,6 +163,81 @@ func (s *Server) updateUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, up)
 }
 
+type exportBody struct {
+	FPS   float64 `json:"fps"`
+	Width int     `json:"width"`
+	Gray  bool    `json:"gray"`
+}
+
+// listExports returns an upload's saved export records.
+func (s *Server) listExports(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.Exports(chi.URLParam(r, "id"))
+	if err != nil {
+		s.notFoundOrError(w, err, "list exports")
+		return
+	}
+	if list == nil {
+		list = []store.ExportConfig{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"exports": list})
+}
+
+// getExport returns a single export record.
+func (s *Server) getExport(w http.ResponseWriter, r *http.Request) {
+	cfg, ok, err := s.store.Export(chi.URLParam(r, "id"), chi.URLParam(r, "exportId"))
+	if err != nil {
+		s.notFoundOrError(w, err, "get export")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "export not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// createExport adds a new export record (params default when omitted).
+func (s *Server) createExport(w http.ResponseWriter, r *http.Request) {
+	var body exportBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	cfg, err := s.store.UpsertExport(chi.URLParam(r, "id"),
+		store.ExportConfig{FPS: body.FPS, Width: body.Width, Gray: body.Gray})
+	if err != nil {
+		s.notFoundOrError(w, err, "create export")
+		return
+	}
+	writeJSON(w, http.StatusCreated, cfg)
+}
+
+// updateExport updates an existing export record's params.
+func (s *Server) updateExport(w http.ResponseWriter, r *http.Request) {
+	var body exportBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	cfg, err := s.store.UpsertExport(chi.URLParam(r, "id"),
+		store.ExportConfig{ID: chi.URLParam(r, "exportId"), FPS: body.FPS, Width: body.Width, Gray: body.Gray})
+	if err != nil {
+		s.notFoundOrError(w, err, "update export")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// deleteExport removes an export record.
+func (s *Server) deleteExport(w http.ResponseWriter, r *http.Request) {
+	ok, err := s.store.DeleteExport(chi.URLParam(r, "id"), chi.URLParam(r, "exportId"))
+	if err != nil {
+		s.notFoundOrError(w, err, "delete export")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": ok})
+}
+
 // listTags returns the union of all tags across uploads, for autocomplete.
 func (s *Server) listTags(w http.ResponseWriter, _ *http.Request) {
 	tags, err := s.store.AllTags()
@@ -199,7 +275,48 @@ func (s *Server) frame(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "no-store")
+	// Suggest a meaningful filename (with extension) when the frame is saved,
+	// while still displaying inline as an <img>/preview.
+	name := frameFilename(up, at)
+	w.Header().Set("Content-Disposition", "inline; filename="+strconv.Quote(name))
 	_, _ = w.Write(img)
+}
+
+// frameFilename builds a download name like "match-1_12.5s.jpg" from the upload's
+// title (or original filename), the timestamp and a .jpg extension.
+func frameFilename(up store.Upload, at float64) string {
+	base := up.Title
+	if base == "" {
+		base = up.Filename
+	}
+	if base == "" {
+		base = up.ID
+	}
+	base = filepath.Base(base)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	base = sanitizeFilename(base)
+	if base == "" {
+		base = "frame"
+	}
+	return fmt.Sprintf("%s_%ss.jpg", base, strconv.FormatFloat(at, 'f', -1, 64))
+}
+
+// sanitizeFilename keeps a safe subset of characters for a download filename,
+// collapsing anything else to underscores.
+func sanitizeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('_')
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return strings.Trim(b.String(), "._")
 }
 
 // setThumbnail regenerates the thumbnail from the frame at the given timestamp.
@@ -269,15 +386,17 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		if _, err := os.Stat(dst); err != nil { // re-check after acquiring the lock
 			ctx, cancel := context.WithTimeout(context.Background(), proxyTimeout)
 			defer cancel()
-			tmp := dst + ".tmp"
+			// Unique temp name per generation: a leftover ffmpeg orphaned by a
+			// restart can never write to the same temp as a new run (which would
+			// corrupt the cached file). Cleaned up on every exit path.
+			tmp := fmt.Sprintf("%s.%d.tmp", dst, time.Now().UnixNano())
+			defer os.Remove(tmp)
 			if err := process.WriteProxy(ctx, s.store.DataPath(id), tmp, fps, width, gray); err != nil {
-				_ = os.Remove(tmp)
 				s.log.Error("build proxy", "id", id, "err", err)
 				writeError(w, http.StatusInternalServerError, "failed to build proxy")
 				return
 			}
 			if err := os.Rename(tmp, dst); err != nil {
-				_ = os.Remove(tmp)
 				s.log.Error("finalize proxy", "id", id, "err", err)
 				writeError(w, http.StatusInternalServerError, "failed to finalize proxy")
 				return

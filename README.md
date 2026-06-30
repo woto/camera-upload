@@ -97,9 +97,13 @@ curl -X POST http://motion/jobs -d '{"video_url":
 
 Требуются Go 1.25+ и `ffmpeg`/`ffprobe` в `PATH`.
 
+Канонический локальный порт — **8200** (чтобы не конфликтовать с соседними
+сервисами camera-motion `8100` и camera-homography `8300`; внутри контейнера
+по умолчанию используется `8000`):
+
 ```bash
-go run ./cmd/server
-# открыть http://localhost:8000/client
+PORT=8200 go run ./cmd/server
+# открыть http://localhost:8200/client
 
 # порт можно задать флагом (переопределяет PORT) или переменной окружения:
 go run ./cmd/server -port 8200

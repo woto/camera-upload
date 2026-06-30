@@ -18,14 +18,23 @@
     th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; }
     .bar { background: #e5e7eb; border-radius: 6px; height: 10px; width: 120px; overflow: hidden; }
     .bar > span { display: block; height: 100%; background: #2563eb; transition: width .3s; }
-    .thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 4px; background: #e5e7eb; display: block; }
+    .thumb { width: 192px; height: 108px; object-fit: cover; border-radius: 4px; background: #e5e7eb; display: block; }
     .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
     .badge.done { background: #dcfce7; color: #166534; }
     .badge.progress { background: #fef9c3; color: #854d0e; }
+    .badge.absent { background: #e5e7eb; color: #6b7280; }
     a.btn, button.btn { font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid #d1d5db;
       background: #fff; cursor: pointer; text-decoration: none; color: #1f2937; display: inline-block; margin: 1px 0; }
-    button.btn.danger { color: #b91c1c; border-color: #fecaca; }
+    a.btn:hover, button.btn:hover { background: #f3f4f6; }
+    /* Semantic, colour-coded actions (filled so the intent reads at a glance). */
     button.btn.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+    button.btn.primary:hover { background: #1d4ed8; }
+    button.btn.frame, button.btn.export { color: #fff; background: #4f46e5; border-color: #4f46e5; }
+    button.btn.frame:hover, button.btn.export:hover { background: #4338ca; }
+    button.btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }  /* delete → red */
+    button.btn.danger:hover { background: #b91c1c; }
+    button.btn.close { color: #fff; background: #9ca3af; border-color: #9ca3af; }   /* close panel → grey */
+    button.btn.close:hover { background: #6b7280; }
     .muted { color: #9ca3af; font-size: 12px; }
     .title-input { width: 100%; font-size: 14px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
     .title-label { cursor: text; display: inline-block; font-size: 14px; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px; min-width: 80px; }
@@ -35,6 +44,8 @@
     .tag button { border: none; background: none; cursor: pointer; color: #6366f1; font-size: 12px; padding: 0; }
     .tag-input { width: 90px; font-size: 12px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; }
     .picker { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    .export-rec { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px 18px; margin: 14px 0; display: flex; flex-direction: column; gap: 14px; }
+    .export-rec .row { gap: 16px; }
     .picker img { max-width: 100%; border-radius: 6px; display: block; margin: 8px 0; max-height: 320px; }
     .picker .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .picker h4 { margin: 14px 0 4px; font-size: 13px; color: #374151; }
@@ -43,6 +54,15 @@
     .picker input[type=range] { flex: 1; min-width: 200px; }
     .url-box { flex: 1; min-width: 200px; font-size: 12px; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; }
     .actions { white-space: nowrap; }
+    /* When a panel is expanded, tie it visually to its source row: tint both and
+       run a matching colour accent down the left edge of the row + the panel. */
+    tr.row-open.open-frame > td { background: #eef2ff; }
+    tr.row-open.open-frame > td:first-child { box-shadow: inset 4px 0 0 #4f46e5; }
+    tr.row-open.open-export > td { background: #eef2ff; }
+    tr.row-open.open-export > td:first-child { box-shadow: inset 4px 0 0 #4f46e5; }
+    .panel-title b { font-size: 14px; }
+    .panel-for { font-weight: 600; color: #374151; margin-left: 6px; }
+    .panel-for .muted { font-weight: 400; }
     .filterbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
     .filterbar #search { max-width: 280px; }
     .filter-tag { cursor: pointer; user-select: none; background: #eef2ff; color: #3730a3; border-radius: 10px; padding: 2px 10px; font-size: 12px; border: 1px solid transparent; }
@@ -77,6 +97,12 @@
   <script src="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.js"></script>
   <script>
     const TUS_ENDPOINT = '/files/';
+    // Base URL of camera-motion (injected server-side). The "Open in camera-motion"
+    // button opens its client with the proxy URL prefilled.
+    const CAMERA_MOTION_URL = "__CAMERA_MOTION_URL__".replace(/\/+$/, '');
+    // Base URL of camera-fisheye (injected server-side). The "Fisheye" button opens
+    // its client with the video id and a frame, and the row shows a perspective badge.
+    const CAMERA_FISHEYE_URL = "__CAMERA_FISHEYE_URL__".replace(/\/+$/, '');
 
     const uppy = new Uppy.Uppy({
       autoProceed: false,
@@ -147,9 +173,11 @@
         const thumb = u.has_thumbnail
           ? '<img class="thumb" src="/uploads/' + u.id + '/thumbnail?ts=' + Date.now() + '" alt="" />'
           : '<div class="thumb"></div>';
-        const frameBtn = u.completed ? '<button class="btn" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
+        const frameBtn = u.completed ? '<button class="btn frame" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
         // Export panel: download original + build a configurable proxy URL for camera-motion.
-        const exportBtn = u.completed ? '<button class="btn" data-act="export" data-id="' + u.id + '">Export…</button>' : '';
+        const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Export</button>' : '';
+        // Open the frame in camera-fisheye to tune lens-distortion correction for this video.
+        const fisheyeBtn = u.completed && CAMERA_FISHEYE_URL ? '<button class="btn" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
         return '' +
           '<tr data-row="' + u.id + '">' +
             '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
@@ -161,7 +189,7 @@
             '<td style="min-width:180px"><div class="tags" data-tags="' + u.id + '"></div></td>' +
             '<td><div class="bar"><span data-bar="' + u.id + '" style="width:' + u.percent.toFixed(1) + '%"></span></div></td>' +
             '<td data-status="' + u.id + '"></td>' +
-            '<td class="actions">' + frameBtn + ' ' + exportBtn +
+            '<td class="actions">' + frameBtn + ' ' + exportBtn + ' ' + fisheyeBtn +
               ' <button class="btn danger" data-act="delete" data-id="' + u.id + '">Delete</button></td>' +
           '</tr>' +
           '<tr data-picker-row="' + u.id + '" style="display:none"><td colspan="6"><div data-picker="' + u.id + '"></div></td></tr>' +
@@ -173,7 +201,36 @@
         '<tbody>' + rows + '</tbody></table>';
 
       uploads.forEach(u => { updateStatus(u); renderTags(u.id); });
+      refreshPerspectiveBadges(uploads);
       bindActions();
+    }
+
+    // Ask camera-fisheye which videos already have a saved perspective, and show a
+    // present/absent badge per row. Degrades silently if the service is unreachable.
+    async function refreshPerspectiveBadges(uploads) {
+      if (!CAMERA_FISHEYE_URL) return;
+      const ids = uploads.filter(u => u.completed).map(u => u.id);
+      if (!ids.length) return;
+      let present = {};
+      try {
+        present = await (await fetch(CAMERA_FISHEYE_URL + '/perspectives?ids=' + encodeURIComponent(ids.join(',')))).json();
+      } catch (e) { return; }
+      ids.forEach(id => {
+        const el = uploadsEl.querySelector('[data-persp="' + id + '"]');
+        if (el) el.innerHTML = present[id]
+          ? '<span class="badge done">perspective</span>'
+          : '<span class="badge absent">no perspective</span>';
+      });
+    }
+
+    // Open camera-fisheye for a video, handing it the video id and a frame URL.
+    function openFisheye(id) {
+      if (!CAMERA_FISHEYE_URL) return;
+      const u = currentUploads.find(x => x.id === id) || {};
+      const t = (u.thumbnail_t != null) ? u.thumbnail_t : 0;
+      const frame = location.origin + '/uploads/' + id + '/frame?t=' + t;
+      window.open(CAMERA_FISHEYE_URL + '/client?upload_id=' + encodeURIComponent(id) +
+        '&image_url=' + encodeURIComponent(frame), '_blank', 'noopener');
     }
 
     function updateStatus(u) {
@@ -181,7 +238,7 @@
       const st = uploadsEl.querySelector('[data-status="' + u.id + '"]');
       if (bar) bar.style.width = u.percent.toFixed(1) + '%';
       if (st) st.innerHTML = u.completed
-        ? '<span class="badge done">ready</span>'
+        ? '<span class="badge done">ready</span> <span data-persp="' + u.id + '"></span>'
         : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
       // The thumbnail is generated server-side only after the upload finishes.
       // Since a completing upload does not change the row set (no full re-render),
@@ -238,6 +295,9 @@
       uploadsEl.querySelectorAll('[data-act="export"]').forEach(b => {
         b.onclick = () => toggleExport(b.dataset.id);
       });
+      uploadsEl.querySelectorAll('[data-act="fisheye"]').forEach(b => {
+        b.onclick = () => openFisheye(b.dataset.id);
+      });
     }
 
     async function copyButton(btn, url, promptLabel) {
@@ -248,6 +308,35 @@
       } catch (e) { prompt(promptLabel, url); }
     }
 
+    // Human-readable name of a row, for panel headers.
+    function rowName(id) {
+      const u = currentUploads.find(x => x.id === id) || {};
+      const t = (rowState[id] && rowState[id].title) || '';
+      return t || u.filename || id;
+    }
+    // Highlight the source row (and its panel rows) to match the open panel, so
+    // it's obvious which upload an expanded panel belongs to.
+    function applyRowHighlight(id) {
+      const tr = uploadsEl.querySelector('[data-row="' + id + '"]');
+      const pRow = uploadsEl.querySelector('[data-picker-row="' + id + '"]');
+      const eRow = uploadsEl.querySelector('[data-export-row="' + id + '"]');
+      // The source row takes the colour of whichever panel is open (frame wins).
+      const type = pickerOpen[id] ? 'frame' : (exportOpen[id] ? 'export' : null);
+      if (tr) {
+        tr.classList.toggle('row-open', !!type);
+        tr.classList.toggle('open-frame', type === 'frame');
+        tr.classList.toggle('open-export', type === 'export');
+      }
+      if (pRow) {
+        pRow.classList.toggle('row-open', !!pickerOpen[id]);
+        pRow.classList.toggle('open-frame', !!pickerOpen[id]);
+      }
+      if (eRow) {
+        eRow.classList.toggle('row-open', !!exportOpen[id]);
+        eRow.classList.toggle('open-export', !!exportOpen[id]);
+      }
+    }
+
     // ---------- export panel (download original + configurable proxy URL) ----------
     let exportOpen = {};
     function toggleExport(id) {
@@ -255,13 +344,15 @@
       const box = uploadsEl.querySelector('[data-export="' + id + '"]');
       exportOpen[id] = !exportOpen[id];
       row.style.display = exportOpen[id] ? '' : 'none';
+      applyRowHighlight(id);
       if (!exportOpen[id]) { box.innerHTML = ''; return; }
 
       const dlUrl = location.origin + '/uploads/' + id + '/download';
       box.innerHTML =
-        '<div class="picker">' +
-          '<div class="row picker-head"><b>Export</b>' +
-            '<button class="btn" data-closeexport="' + id + '">Close ✕</button></div>' +
+        '<div class="picker export-panel">' +
+          '<div class="row picker-head"><span class="panel-title"><b>Export</b>' +
+            '<span class="panel-for">' + esc(rowName(id)) + '</span></span>' +
+            '<button class="btn close" data-closeexport="' + id + '">Close ✕</button></div>' +
 
           '<h4>Original</h4>' +
           '<div class="row">' +
@@ -270,43 +361,92 @@
             '<button class="btn" data-copyorig>Copy</button>' +
           '</div>' +
 
-          '<h4>Proxy for camera-motion</h4>' +
-          '<div class="row">' +
-            '<label>fps <input type="number" step="0.5" value="4" data-pfps style="width:70px" /></label>' +
-            '<label>width <input type="number" value="480" data-pwidth style="width:80px" /></label>' +
-            '<label>grayscale <input type="checkbox" data-pgray checked /></label>' +
-          '</div>' +
-          '<div class="row">' +
-            '<input class="url-box" readonly data-proxyurl />' +
-            '<button class="btn" data-copyproxy>Copy</button>' +
-            '<a class="btn" data-openproxy target="_blank" rel="noopener">Open</a>' +
-          '</div>' +
+          '<h4>Exports for camera-motion</h4>' +
+          '<div class="row"><button class="btn primary" data-addexport>+ Add export</button></div>' +
+          '<div data-exportlist></div>' +
         '</div>';
 
-      const fps = box.querySelector('[data-pfps]');
-      const width = box.querySelector('[data-pwidth]');
-      const gray = box.querySelector('[data-pgray]');
-      const proxyBox = box.querySelector('[data-proxyurl]');
-      const openLink = box.querySelector('[data-openproxy]');
-
-      function proxyUrl() {
-        const f = parseFloat(fps.value) || 4;
-        const w = parseInt(width.value, 10) || 480;
-        const g = gray.checked ? 1 : 0;
-        return location.origin + '/uploads/' + id + '/proxy?fps=' + f + '&width=' + w + '&gray=' + g;
-      }
-      function refreshProxy() {
-        const url = proxyUrl();
-        proxyBox.value = url;
-        openLink.href = url;
-      }
-      [fps, width].forEach(el => el.oninput = refreshProxy);
-      gray.onchange = refreshProxy;
-      refreshProxy();
-
       box.querySelector('[data-copyorig]').onclick = e => copyButton(e.currentTarget, dlUrl, 'Original URL:');
-      box.querySelector('[data-copyproxy]').onclick = e => copyButton(e.currentTarget, proxyBox.value, 'Proxy URL (for camera-motion):');
       box.querySelector('[data-closeexport="' + id + '"]').onclick = () => toggleExport(id);
+      box.querySelector('[data-addexport]').onclick = async () => {
+        await api('POST', '/uploads/' + id + '/exports', { fps: 0.1, width: 480, gray: true });
+        renderExports(id, box);
+      };
+      renderExports(id, box);
+    }
+
+    // Render the saved export records for an upload into the panel's list.
+    async function renderExports(id, box) {
+      const listEl = box.querySelector('[data-exportlist]');
+      if (!listEl) return;
+      let exports = [];
+      try { exports = ((await (await api('GET', '/uploads/' + id + '/exports')).json()).exports) || []; } catch (e) {}
+      listEl.innerHTML = '';
+      if (!exports.length) {
+        listEl.innerHTML = '<p class="muted">No exports yet. Click “+ Add export”.</p>';
+        return;
+      }
+      // Ask camera-motion which of these records already have an analysis result,
+      // so each row can show a present/absent badge.
+      let present = {};
+      if (CAMERA_MOTION_URL) {
+        try {
+          const ids = exports.map(r => r.id).join(',');
+          present = await (await fetch(CAMERA_MOTION_URL + '/results?ids=' + encodeURIComponent(ids))).json();
+        } catch (e) {}
+      }
+      exports.forEach(rec => listEl.appendChild(exportRow(id, box, rec, !!present[rec.id])));
+    }
+
+    // One editable export record (params + proxy URL + actions).
+    function exportRow(id, box, rec, analyzed) {
+      const wrap = document.createElement('div');
+      wrap.className = 'export-rec';
+      wrap.innerHTML =
+        '<div class="row">' +
+          '<span class="badge ' + (analyzed ? 'done' : 'absent') + '">' + (analyzed ? 'analyzed' : 'not analyzed') + '</span>' +
+          '<label>fps <input type="number" step="0.5" data-f style="width:70px" /></label>' +
+          '<label>width <input type="number" data-w style="width:80px" /></label>' +
+          '<label>grayscale <input type="checkbox" data-g /></label>' +
+          '<button class="btn" data-save>Save</button>' +
+          '<button class="btn danger" data-del>Delete</button>' +
+        '</div>' +
+        '<div class="row">' +
+          '<input class="url-box" readonly data-url />' +
+          '<button class="btn" data-copy>Copy</button>' +
+          '<a class="btn" data-open target="_blank" rel="noopener">Open</a>' +
+          '<button class="btn primary" data-motion>Open in camera-motion</button>' +
+        '</div>';
+      const f = wrap.querySelector('[data-f]');
+      const w = wrap.querySelector('[data-w]');
+      const g = wrap.querySelector('[data-g]');
+      const urlBox = wrap.querySelector('[data-url]');
+      const openLink = wrap.querySelector('[data-open]');
+      f.value = rec.fps; w.value = rec.width; g.checked = rec.gray;
+      const proxyUrl = () => {
+        const ff = parseFloat(f.value) || 4, ww = parseInt(w.value, 10) || 480, gg = g.checked ? 1 : 0;
+        return location.origin + '/uploads/' + id + '/proxy?fps=' + ff + '&width=' + ww + '&gray=' + gg;
+      };
+      const refresh = () => { const u = proxyUrl(); urlBox.value = u; openLink.href = u; };
+      [f, w].forEach(el => el.oninput = refresh);
+      g.onchange = refresh;
+      refresh();
+      wrap.querySelector('[data-copy]').onclick = e => copyButton(e.currentTarget, urlBox.value, 'Proxy URL (for camera-motion):');
+      wrap.querySelector('[data-motion]').onclick = () =>
+        window.open(CAMERA_MOTION_URL + '/client?upload=' + encodeURIComponent(location.origin) +
+          '&upload_id=' + encodeURIComponent(id) + '&export_id=' + encodeURIComponent(rec.id), '_blank', 'noopener');
+      wrap.querySelector('[data-save]').onclick = async e => {
+        const btn = e.currentTarget;
+        await api('PUT', '/uploads/' + id + '/exports/' + rec.id,
+          { fps: parseFloat(f.value) || 4, width: parseInt(w.value, 10) || 480, gray: g.checked });
+        btn.textContent = 'Saved ✓';
+        setTimeout(() => { btn.textContent = 'Save'; }, 1200);
+      };
+      wrap.querySelector('[data-del]').onclick = async () => {
+        await api('DELETE', '/uploads/' + id + '/exports/' + rec.id);
+        renderExports(id, box);
+      };
+      return wrap;
     }
 
     // ---------- title: label that becomes an input on click ----------
@@ -353,6 +493,7 @@
       const box = uploadsEl.querySelector('[data-picker="' + id + '"]');
       pickerOpen[id] = !pickerOpen[id];
       row.style.display = pickerOpen[id] ? '' : 'none';
+      applyRowHighlight(id);
       if (!pickerOpen[id]) { box.innerHTML = ''; return; }
 
       const up = currentUploads.find(u => u.id === id);
@@ -361,9 +502,10 @@
       let start = Math.min(1, dur / 2);
       if (up && up.thumbnail_t != null) start = Math.max(0, Math.min(up.thumbnail_t, dur));
       box.innerHTML =
-        '<div class="picker">' +
-          '<div class="row picker-head"><b>Frame</b>' +
-            '<button class="btn" data-closepicker="' + id + '">Close ✕</button></div>' +
+        '<div class="picker frame-panel">' +
+          '<div class="row picker-head"><span class="panel-title"><b>Frame</b>' +
+            '<span class="panel-for">' + esc(rowName(id)) + '</span></span>' +
+            '<button class="btn close" data-closepicker="' + id + '">Close ✕</button></div>' +
           '<div class="row"><label>Time: <b data-t="' + id + '">' + start.toFixed(1) + 's</b></label>' +
           '<input type="range" min="0" max="' + dur.toFixed(1) + '" step="0.1" value="' + start + '" data-slider="' + id + '" /></div>' +
           '<img data-preview="' + id + '" src="/uploads/' + id + '/frame?t=' + start + '" alt="frame preview" />' +
@@ -471,9 +613,12 @@
         uploads.forEach(u => {
           if (!rowState[u.id]) rowState[u.id] = { title: u.title, tags: (u.tags || []).slice() };
         });
-        const ids = uploads.map(u => u.id).join(',');
-        if (force || ids !== renderedIds) {
-          renderedIds = ids;
+        // Include completion state in the signature so that when an upload
+        // finishes (gaining Frame/Export/Download actions) the row is fully
+        // re-rendered — not just its progress badge.
+        const sig = uploads.map(u => u.id + ':' + (u.completed ? 1 : 0)).join(',');
+        if (force || sig !== renderedIds) {
+          renderedIds = sig;
           render(uploads);
         } else {
           uploads.forEach(updateStatus);
