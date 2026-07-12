@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Video Upload</title>
+  <title>Camera Upload</title>
   <link href="https://releases.transloadit.com/uppy/v4.13.3/uppy.min.css" rel="stylesheet" />
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6f8; color: #1a1a1a; }
@@ -73,7 +73,7 @@
 </head>
 <body>
   <header>
-    <h1>Video Upload</h1>
+    <h1>Camera Upload</h1>
     <p>Resumable uploads of large files (tus) · drag &amp; drop or pick a file</p>
   </header>
 
@@ -100,10 +100,10 @@
     const TUS_ENDPOINT = '/files/';
     // Base URL of camera-motion (injected server-side). The "Open in camera-motion"
     // button opens its client with the proxy URL prefilled.
-    const CAMERA_MOTION_URL = "__CAMERA_MOTION_URL__".replace(/\/+$/, '');
+    const CAMERA_MOTION_EXTERNAL_URL = "__CAMERA_MOTION_EXTERNAL_URL__".replace(/\/+$/, '');
     // Base URL of camera-fisheye (injected server-side). The "Fisheye" button opens
     // its client with the video id and a frame, and the row shows a perspective badge.
-    const CAMERA_FISHEYE_URL = "__CAMERA_FISHEYE_URL__".replace(/\/+$/, '');
+    const CAMERA_FISHEYE_EXTERNAL_URL = "__CAMERA_FISHEYE_EXTERNAL_URL__".replace(/\/+$/, '');
 
     const uppy = new Uppy.Uppy({
       autoProceed: false,
@@ -178,7 +178,7 @@
         // Export panel: download original + build a configurable proxy URL for camera-motion.
         const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Export</button>' : '';
         // Open the frame in camera-fisheye to tune lens-distortion correction for this video.
-        const fisheyeBtn = u.completed && CAMERA_FISHEYE_URL ? '<button class="btn fisheye" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
+        const fisheyeBtn = u.completed && CAMERA_FISHEYE_EXTERNAL_URL ? '<button class="btn fisheye" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
         return '' +
           '<tr data-row="' + u.id + '">' +
             '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
@@ -219,11 +219,11 @@
     // Ask camera-fisheye which videos already have a saved perspective, update the
     // cache and the rendered badges. Degrades silently if the service is unreachable.
     async function refreshPerspectiveBadges(uploads) {
-      if (!CAMERA_FISHEYE_URL) return;
+      if (!CAMERA_FISHEYE_EXTERNAL_URL) return;
       const ids = uploads.filter(u => u.completed).map(u => u.id);
       if (!ids.length) return;
       try {
-        const present = await (await fetch(CAMERA_FISHEYE_URL + '/perspectives?ids=' + encodeURIComponent(ids.join(',')))).json();
+        const present = await (await fetch(CAMERA_FISHEYE_EXTERNAL_URL + '/perspectives?ids=' + encodeURIComponent(ids.join(',')))).json();
         Object.assign(perspectivePresent, present);
       } catch (e) { return; }
       ids.forEach(id => {
@@ -238,11 +238,11 @@
 
     // Open camera-fisheye for a video, handing it the video id and a frame URL.
     function openFisheye(id) {
-      if (!CAMERA_FISHEYE_URL) return;
+      if (!CAMERA_FISHEYE_EXTERNAL_URL) return;
       const u = currentUploads.find(x => x.id === id) || {};
       const t = (u.thumbnail_t != null) ? u.thumbnail_t : 0;
       const frame = location.origin + '/uploads/' + id + '/frame?t=' + t;
-      window.open(CAMERA_FISHEYE_URL + '/client?upload_id=' + encodeURIComponent(id) +
+      window.open(CAMERA_FISHEYE_EXTERNAL_URL + '/client?upload_id=' + encodeURIComponent(id) +
         '&image_url=' + encodeURIComponent(frame), '_blank', 'noopener');
     }
 
@@ -402,10 +402,10 @@
       // Ask camera-motion which of these records already have an analysis result,
       // so each row can show a present/absent badge.
       let present = {};
-      if (CAMERA_MOTION_URL) {
+      if (CAMERA_MOTION_EXTERNAL_URL) {
         try {
           const ids = exports.map(r => r.id).join(',');
-          present = await (await fetch(CAMERA_MOTION_URL + '/results?ids=' + encodeURIComponent(ids))).json();
+          present = await (await fetch(CAMERA_MOTION_EXTERNAL_URL + '/results?ids=' + encodeURIComponent(ids))).json();
         } catch (e) {}
       }
       exports.forEach(rec => listEl.appendChild(exportRow(id, box, rec, !!present[rec.id])));
@@ -446,7 +446,7 @@
       refresh();
       wrap.querySelector('[data-copy]').onclick = e => copyButton(e.currentTarget, urlBox.value, 'Proxy URL (for camera-motion):');
       wrap.querySelector('[data-motion]').onclick = () =>
-        window.open(CAMERA_MOTION_URL + '/client?upload=' + encodeURIComponent(location.origin) +
+        window.open(CAMERA_MOTION_EXTERNAL_URL + '/client?upload=' + encodeURIComponent(location.origin) +
           '&upload_id=' + encodeURIComponent(id) + '&export_id=' + encodeURIComponent(rec.id), '_blank', 'noopener');
       wrap.querySelector('[data-save]').onclick = async e => {
         const btn = e.currentTarget;

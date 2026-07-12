@@ -22,13 +22,10 @@ type Config struct {
 	Thumbnails bool
 	// IncompleteTTL is how long an unfinished upload may live before cleanup removes it.
 	IncompleteTTL time.Duration
-	// CameraMotionURL is the base URL of the camera-motion service, injected into
-	// the client so the "Open in camera-motion" button can prefill a proxy URL.
-	CameraMotionURL string
-	// CameraFisheyeURL is the base URL of the camera-fisheye service, injected into
-	// the client so the "Fisheye" button can open it and the row can show a
-	// perspective badge.
-	CameraFisheyeURL string
+	// CameraMotionExternalURL is the browser-facing base URL of camera-motion.
+	CameraMotionExternalURL string
+	// CameraFisheyeExternalURL is the browser-facing base URL of camera-fisheye.
+	CameraFisheyeExternalURL string
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
@@ -40,8 +37,14 @@ func Load() (Config, error) {
 		MaxUploadSize:    10 << 30, // 10 GiB
 		Thumbnails:       getenvBool("THUMBNAILS", true),
 		IncompleteTTL:    24 * time.Hour,
-		CameraMotionURL:  getenv("CAMERA_MOTION_URL", "http://127.0.0.1:8100"),
-		CameraFisheyeURL: getenv("CAMERA_FISHEYE_URL", "http://127.0.0.1:8400"),
+	}
+
+	var err error
+	if cfg.CameraMotionExternalURL, err = requireEnv("CAMERA_MOTION_EXTERNAL_URL"); err != nil {
+		return Config{}, err
+	}
+	if cfg.CameraFisheyeExternalURL, err = requireEnv("CAMERA_FISHEYE_EXTERNAL_URL"); err != nil {
+		return Config{}, err
 	}
 
 	if v := os.Getenv("MAX_UPLOAD_SIZE"); v != "" {
@@ -73,6 +76,13 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func requireEnv(key string) (string, error) {
+	if v := os.Getenv(key); v != "" {
+		return v, nil
+	}
+	return "", fmt.Errorf("%s is required", key)
 }
 
 func getenvBool(key string, fallback bool) bool {

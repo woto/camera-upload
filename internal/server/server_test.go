@@ -66,11 +66,18 @@ func TestClientServed(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
 		t.Errorf("content-type = %q", ct)
 	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<title>Camera Upload</title>") {
+		t.Errorf("client title does not identify Camera Upload")
+	}
+	if !strings.Contains(body, "<h1>Camera Upload</h1>") {
+		t.Errorf("client header does not identify Camera Upload")
+	}
 }
 
 func TestClientInjectsCameraMotionURL(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraMotionURL: "http://motion.example:7000"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraMotionExternalURL: "http://motion.example:7000"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -82,14 +89,14 @@ func TestClientInjectsCameraMotionURL(t *testing.T) {
 	if !strings.Contains(body, "http://motion.example:7000") {
 		t.Errorf("served client does not contain the configured camera-motion URL")
 	}
-	if strings.Contains(body, "__CAMERA_MOTION_URL__") {
+	if strings.Contains(body, "__CAMERA_MOTION_EXTERNAL_URL__") {
 		t.Errorf("served client still contains the unreplaced placeholder")
 	}
 }
 
 func TestClientInjectsCameraFisheyeURL(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraFisheyeURL: "http://fisheye.example:7400"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraFisheyeExternalURL: "http://fisheye.example:7400"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -101,7 +108,7 @@ func TestClientInjectsCameraFisheyeURL(t *testing.T) {
 	if !strings.Contains(body, "http://fisheye.example:7400") {
 		t.Errorf("served client does not contain the configured camera-fisheye URL")
 	}
-	if strings.Contains(body, "__CAMERA_FISHEYE_URL__") {
+	if strings.Contains(body, "__CAMERA_FISHEYE_EXTERNAL_URL__") {
 		t.Errorf("served client still contains the unreplaced placeholder")
 	}
 }
