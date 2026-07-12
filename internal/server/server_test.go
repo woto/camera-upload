@@ -113,6 +113,25 @@ func TestClientInjectsCameraFisheyeURL(t *testing.T) {
 	}
 }
 
+func TestClientInjectsCameraSAM3URL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500"}
+	st := store.New(dir)
+	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(cfg, st, tusStub, log)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "http://sam3.example:8500") {
+		t.Errorf("served client does not contain the configured camera-sam3 URL")
+	}
+	if strings.Contains(body, "__CAMERA_SAM3_EXTERNAL_URL__") {
+		t.Errorf("served client still contains the unreplaced placeholder")
+	}
+}
+
 func doReq(srv http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body == "" {

@@ -12,6 +12,9 @@ services:
       # How long unfinished uploads are kept before cleanup.
       INCOMPLETE_TTL: "24h"
       THUMBNAILS: "true"
+      CAMERA_MOTION_EXTERNAL_URL: "https://motion.volleycam.com"
+      CAMERA_FISHEYE_EXTERNAL_URL: "https://fisheye.volleycam.com"
+      CAMERA_SAM3_EXTERNAL_URL: "https://sam3.volleycam.com"
 
     volumes:
       - uploads:/data

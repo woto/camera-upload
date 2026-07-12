@@ -52,6 +52,8 @@
     .picker h4 { margin: 14px 0 4px; font-size: 13px; color: #374151; }
     .picker label { font-size: 13px; color: #374151; }
     .picker .picker-head { justify-content: space-between; }
+    .picker .row-actions { margin-bottom: 10px; }
+    .sam3-open { margin-top: 10px; }
     .picker input[type=range] { flex: 1; min-width: 200px; }
     .url-box { flex: 1; min-width: 200px; font-size: 12px; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; }
     .actions { white-space: nowrap; }
@@ -63,12 +65,20 @@
     tr.row-open.open-export > td:first-child { box-shadow: inset 4px 0 0 #4f46e5; }
     .panel-title b { font-size: 14px; }
     .panel-for { font-weight: 600; color: #374151; margin-left: 6px; }
+    .panel-for::before { content: '· '; font-weight: 400; color: #9ca3af; }
     .panel-for .muted { font-weight: 400; }
     .filterbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
     .filterbar #search { max-width: 280px; }
     .filter-tag { cursor: pointer; user-select: none; background: #eef2ff; color: #3730a3; border-radius: 10px; padding: 2px 10px; font-size: 12px; border: 1px solid transparent; }
     .filter-tag.active { background: #3730a3; color: #fff; }
     .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; font-size: 13px; color: #6b7280; }
+    .frame-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; }
+    .selected-frames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .selected-frame { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; }
+    .selected-frame img { margin: 0; width: 100%; height: 72px; object-fit: cover; border-radius: 0; }
+    .selected-frame .frame-card-actions { display: flex; justify-content: space-between; padding: 5px; gap: 4px; }
+    .selected-frame .frame-card-actions button { font-size: 11px; padding: 2px 5px; }
+    @media (max-width: 700px) { .frame-layout { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -104,6 +114,9 @@
     // Base URL of camera-fisheye (injected server-side). The "Fisheye" button opens
     // its client with the video id and a frame, and the row shows a perspective badge.
     const CAMERA_FISHEYE_EXTERNAL_URL = "__CAMERA_FISHEYE_EXTERNAL_URL__".replace(/\/+$/, '');
+    // Base URL of camera-sam3. Selected frame URLs are handed to its client via
+    // an origin-checked postMessage handshake rather than query parameters.
+    const CAMERA_SAM3_EXTERNAL_URL = "__CAMERA_SAM3_EXTERNAL_URL__".replace(/\/+$/, '');
 
     const uppy = new Uppy.Uppy({
       autoProceed: false,
@@ -176,9 +189,7 @@
           : '<div class="thumb"></div>';
         const frameBtn = u.completed ? '<button class="btn frame" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
         // Export panel: download original + build a configurable proxy URL for camera-motion.
-        const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Export</button>' : '';
-        // Open the frame in camera-fisheye to tune lens-distortion correction for this video.
-        const fisheyeBtn = u.completed && CAMERA_FISHEYE_EXTERNAL_URL ? '<button class="btn fisheye" data-act="fisheye" data-id="' + u.id + '">Fisheye</button>' : '';
+        const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Video</button>' : '';
         return '' +
           '<tr data-row="' + u.id + '">' +
             '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
@@ -190,7 +201,7 @@
             '<td style="min-width:180px"><div class="tags" data-tags="' + u.id + '"></div></td>' +
             '<td><div class="bar"><span data-bar="' + u.id + '" style="width:' + u.percent.toFixed(1) + '%"></span></div></td>' +
             '<td data-status="' + u.id + '"></td>' +
-            '<td class="actions">' + frameBtn + ' ' + exportBtn + ' ' + fisheyeBtn +
+            '<td class="actions">' + frameBtn + ' ' + exportBtn +
               ' <button class="btn danger" data-act="delete" data-id="' + u.id + '">Delete</button></td>' +
           '</tr>' +
           '<tr data-picker-row="' + u.id + '" style="display:none"><td colspan="6"><div data-picker="' + u.id + '"></div></td></tr>' +
@@ -237,11 +248,12 @@
     window.addEventListener('focus', () => refreshPerspectiveBadges(currentUploads));
 
     // Open camera-fisheye for a video, handing it the video id and a frame URL.
-    function openFisheye(id) {
+    // Called from the frame picker with whichever timestamp is on screen, so
+    // lens-distortion correction can be tuned on a frame that's actually
+    // useful to look at, not just the first one.
+    function openFisheye(id, t) {
       if (!CAMERA_FISHEYE_EXTERNAL_URL) return;
-      const u = currentUploads.find(x => x.id === id) || {};
-      const t = (u.thumbnail_t != null) ? u.thumbnail_t : 0;
-      const frame = location.origin + '/uploads/' + id + '/frame?t=' + t;
+      const frame = frameUrl(id, t);
       window.open(CAMERA_FISHEYE_EXTERNAL_URL + '/client?upload_id=' + encodeURIComponent(id) +
         '&image_url=' + encodeURIComponent(frame), '_blank', 'noopener');
     }
@@ -308,9 +320,6 @@
       uploadsEl.querySelectorAll('[data-act="export"]').forEach(b => {
         b.onclick = () => toggleExport(b.dataset.id);
       });
-      uploadsEl.querySelectorAll('[data-act="fisheye"]').forEach(b => {
-        b.onclick = () => openFisheye(b.dataset.id);
-      });
     }
 
     async function copyButton(btn, url, promptLabel) {
@@ -363,7 +372,7 @@
       const dlUrl = location.origin + '/uploads/' + id + '/download';
       box.innerHTML =
         '<div class="picker export-panel">' +
-          '<div class="row picker-head"><span class="panel-title"><b>Export</b>' +
+          '<div class="row picker-head"><span class="panel-title"><b>Video</b>' +
             '<span class="panel-for">' + esc(rowName(id)) + '</span></span>' +
             '<button class="btn close" data-closeexport="' + id + '">Close ✕</button></div>' +
 
@@ -374,8 +383,8 @@
             '<button class="btn" data-copyorig>Copy</button>' +
           '</div>' +
 
-          '<h4>Exports for camera-motion</h4>' +
-          '<div class="row"><button class="btn primary" data-addexport>+ Add export</button></div>' +
+          '<h4>Videos for camera-motion</h4>' +
+          '<div class="row"><button class="btn primary" data-addexport>+ Add video</button></div>' +
           '<div data-exportlist></div>' +
         '</div>';
 
@@ -396,7 +405,7 @@
       try { exports = ((await (await api('GET', '/uploads/' + id + '/exports')).json()).exports) || []; } catch (e) {}
       listEl.innerHTML = '';
       if (!exports.length) {
-        listEl.innerHTML = '<p class="muted">No exports yet. Click “+ Add export”.</p>';
+        listEl.innerHTML = '<p class="muted">No videos yet. Click “+ Add video”.</p>';
         return;
       }
       // Ask camera-motion which of these records already have an analysis result,
@@ -509,25 +518,35 @@
       applyRowHighlight(id);
       if (!pickerOpen[id]) { box.innerHTML = ''; return; }
 
-      const up = currentUploads.find(u => u.id === id);
-      const dur = up && up.duration ? up.duration : 10;
+      const up = currentUploads.find(u => u.id === id) || {};
+      const dur = up.duration ? up.duration : 10;
       // If a thumbnail was saved from a specific time, reopen the picker there.
       let start = Math.min(1, dur / 2);
-      if (up && up.thumbnail_t != null) start = Math.max(0, Math.min(up.thumbnail_t, dur));
+      if (up.thumbnail_t != null) start = Math.max(0, Math.min(up.thumbnail_t, dur));
+      const fisheyeBtn = CAMERA_FISHEYE_EXTERNAL_URL
+        ? '<button class="btn fisheye" data-fisheye="' + id + '">Fisheye</button>' : '';
       box.innerHTML =
         '<div class="picker frame-panel">' +
           '<div class="row picker-head"><span class="panel-title"><b>Frame</b>' +
             '<span class="panel-for">' + esc(rowName(id)) + '</span></span>' +
             '<button class="btn close" data-closepicker="' + id + '">Close ✕</button></div>' +
-          '<div class="row"><label>Time: <b data-t="' + id + '">' + start.toFixed(1) + 's</b></label>' +
-          '<input type="range" min="0" max="' + dur.toFixed(1) + '" step="0.1" value="' + start + '" data-slider="' + id + '" /></div>' +
-          '<img data-preview="' + id + '" src="/uploads/' + id + '/frame?t=' + start + '" alt="frame preview" />' +
-          '<div class="row">' +
-            '<button class="btn primary" data-setthumb="' + id + '">Set as thumbnail</button>' +
+          '<div class="frame-layout"><div>' +
+            '<div class="row"><label>Time: <b data-t="' + id + '">' + start.toFixed(1) + 's</b></label>' +
+            '<input type="range" min="0" max="' + dur.toFixed(1) + '" step="0.1" value="' + start + '" data-slider="' + id + '" /></div>' +
+            '<img data-preview="' + id + '" src="' + frameUrl(id, start) + '" alt="frame preview" />' +
+            '<div class="row row-actions">' +
+              '<button class="btn primary" data-addframe="' + id + '">+ Add frame</button>' +
+              '<button class="btn primary" data-setthumb="' + id + '">Set as thumbnail</button>' +
+              fisheyeBtn +
+            '</div>' +
+            '<div class="row">' +
+              '<input class="url-box" data-urlbox="' + id + '" readonly value="' + frameUrl(id, start) + '" />' +
+              '<button class="btn" data-copyurl="' + id + '">Copy</button>' +
+            '</div>' +
+          '</div><div><h4>Selected frames <span data-selected-count="' + id + '">0 / 8</span></h4>' +
+            '<div class="selected-frames" data-selected-frames="' + id + '"></div>' +
+            '<button class="btn primary sam3-open" data-sam3="' + id + '" disabled>Open in camera-sam3</button>' +
           '</div>' +
-          '<div class="row">' +
-            '<input class="url-box" data-urlbox="' + id + '" readonly value="' + frameUrl(id, start) + '" />' +
-            '<button class="btn" data-copyurl="' + id + '">Copy</button>' +
           '</div>' +
         '</div>';
 
@@ -537,25 +556,67 @@
       const tLabel = box.querySelector('[data-t="' + id + '"]');
       const preview = box.querySelector('[data-preview="' + id + '"]');
       const urlbox = box.querySelector('[data-urlbox="' + id + '"]');
+      const selected = [];
+      const addBtn = box.querySelector('[data-addframe="' + id + '"]');
+      const sam3Btn = box.querySelector('[data-sam3="' + id + '"]');
+      const selectedList = box.querySelector('[data-selected-frames="' + id + '"]');
+      const selectedCount = box.querySelector('[data-selected-count="' + id + '"]');
       let timer = null;
-      slider.oninput = () => {
-        const t = parseFloat(slider.value);
+
+      function setCurrent(t) {
+        slider.value = t;
         tLabel.textContent = t.toFixed(1) + 's';
         urlbox.value = frameUrl(id, t);
         clearTimeout(timer);
-        timer = setTimeout(() => { preview.src = '/uploads/' + id + '/frame?t=' + t; }, 250);
+        timer = setTimeout(() => { preview.src = frameUrl(id, t); }, 250);
+      }
+      function renderSelected() {
+        selectedCount.textContent = selected.length + ' / 8';
+        selectedList.innerHTML = selected.map((t, i) =>
+          '<div class="selected-frame"><img src="' + frameUrl(id, t) + '" alt="Frame at ' + t.toFixed(1) + 's">' +
+            '<div class="frame-card-actions"><button class="btn" data-goto="' + i + '">' + t.toFixed(1) + 's</button>' +
+            '<button class="btn danger" data-remove="' + i + '">×</button></div></div>'
+        ).join('');
+        selectedList.querySelectorAll('[data-goto]').forEach(btn => { btn.onclick = () => setCurrent(selected[+btn.dataset.goto]); });
+        selectedList.querySelectorAll('[data-remove]').forEach(btn => {
+          btn.onclick = () => { selected.splice(+btn.dataset.remove, 1); renderSelected(); };
+        });
+        const current = +slider.value;
+        addBtn.disabled = selected.length >= 8 || selected.some(t => Math.abs(t - current) < 0.05);
+        sam3Btn.disabled = selected.length === 0 || !CAMERA_SAM3_EXTERNAL_URL;
+      }
+      slider.oninput = () => {
+        setCurrent(+slider.value);
+        renderSelected();
       };
       box.querySelector('[data-setthumb="' + id + '"]').onclick = async () => {
         const t = parseFloat(slider.value);
         await api('POST', '/uploads/' + id + '/thumbnail', { t });
         refresh(true);
       };
+      addBtn.onclick = () => { selected.push(+slider.value); renderSelected(); };
+      sam3Btn.onclick = () => openSAM3(selected.map(t => frameUrl(id, t)));
       box.querySelector('[data-copyurl="' + id + '"]').onclick = async () => {
         try { await navigator.clipboard.writeText(urlbox.value); urlbox.select(); } catch (e) { urlbox.select(); }
       };
+      const fisheyeBtnEl = box.querySelector('[data-fisheye="' + id + '"]');
+      if (fisheyeBtnEl) fisheyeBtnEl.onclick = () => openFisheye(id, +slider.value);
+      renderSelected();
     }
     function frameUrl(id, t) {
       return location.origin + '/uploads/' + id + '/frame?t=' + t;
+    }
+    function openSAM3(imageUrls) {
+      if (!CAMERA_SAM3_EXTERNAL_URL || !imageUrls.length) return;
+      const sam3Origin = new URL(CAMERA_SAM3_EXTERNAL_URL).origin;
+      const child = window.open(CAMERA_SAM3_EXTERNAL_URL + '/client', 'camera_sam3');
+      if (!child) return;
+      const handoff = event => {
+        if (event.source !== child || event.origin !== sam3Origin || !event.data || event.data.type !== 'camera-sam3:ready') return;
+        child.postMessage({ type: 'camera-upload:frames', image_urls: imageUrls }, sam3Origin);
+        window.removeEventListener('message', handoff);
+      };
+      window.addEventListener('message', handoff);
     }
 
     // ---------- filtering & pagination ----------

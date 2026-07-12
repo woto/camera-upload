@@ -45,8 +45,10 @@ curl -X POST http://homography/sessions \
 ```
 
 Так между сервисами передаётся только кадр, а не всё видео. В UI (`/client`)
-для этого есть кнопка **Frame** с выбором момента, копированием URL и
-установкой превью.
+для этого есть кнопка **Frame** с выбором момента, копированием URL,
+установкой превью и временной подборкой до восьми кадров. Подборку можно
+передать в Camera SAM3: новая вкладка получает ссылки через `postMessage`, а
+SAM3 скачивает кадры только при запуске анализа.
 
 ### Прокси для анализа движения (camera-motion)
 
@@ -92,6 +94,9 @@ curl -X POST http://motion/jobs -d '{"video_url":
 | `MAX_UPLOAD_SIZE` | `10737418240` (10 ГиБ) | максимальный размер одной загрузки в байтах |
 | `THUMBNAILS` | `true` | генерировать превью |
 | `INCOMPLETE_TTL` | `24h` | TTL незавершённых загрузок до автоочистки |
+| `CAMERA_MOTION_EXTERNAL_URL` | — | browser-facing URL Camera Motion |
+| `CAMERA_FISHEYE_EXTERNAL_URL` | — | browser-facing URL Camera Fisheye |
+| `CAMERA_SAM3_EXTERNAL_URL` | — | browser-facing URL Camera SAM3 |
 
 ## Запуск локально
 

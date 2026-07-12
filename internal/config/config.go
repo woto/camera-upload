@@ -26,17 +26,19 @@ type Config struct {
 	CameraMotionExternalURL string
 	// CameraFisheyeExternalURL is the browser-facing base URL of camera-fisheye.
 	CameraFisheyeExternalURL string
+	// CameraSAM3ExternalURL is the browser-facing base URL of camera-sam3.
+	CameraSAM3ExternalURL string
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:             ":" + getenv("PORT", "8000"),
-		DataDir:          getenv("DATA_DIR", "./data"),
-		BasePath:         getenv("BASE_PATH", "/files/"),
-		MaxUploadSize:    10 << 30, // 10 GiB
-		Thumbnails:       getenvBool("THUMBNAILS", true),
-		IncompleteTTL:    24 * time.Hour,
+		Addr:          ":" + getenv("PORT", "8000"),
+		DataDir:       getenv("DATA_DIR", "./data"),
+		BasePath:      getenv("BASE_PATH", "/files/"),
+		MaxUploadSize: 10 << 30, // 10 GiB
+		Thumbnails:    getenvBool("THUMBNAILS", true),
+		IncompleteTTL: 24 * time.Hour,
 	}
 
 	var err error
@@ -44,6 +46,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.CameraFisheyeExternalURL, err = requireEnv("CAMERA_FISHEYE_EXTERNAL_URL"); err != nil {
+		return Config{}, err
+	}
+	if cfg.CameraSAM3ExternalURL, err = requireEnv("CAMERA_SAM3_EXTERNAL_URL"); err != nil {
 		return Config{}, err
 	}
 

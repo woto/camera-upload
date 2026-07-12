@@ -9,6 +9,7 @@ func setRequiredExternalURLs(t *testing.T) {
 	t.Helper()
 	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
 	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
+	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "http://sam3.example")
 }
 
 func TestLoadRequiresCameraMotionExternalURL(t *testing.T) {
@@ -49,5 +50,19 @@ func TestLoadReadsExternalURLs(t *testing.T) {
 	}
 	if cfg.CameraFisheyeExternalURL != "http://fisheye.example" {
 		t.Fatalf("CameraFisheyeExternalURL = %q", cfg.CameraFisheyeExternalURL)
+	}
+	if cfg.CameraSAM3ExternalURL != "http://sam3.example" {
+		t.Fatalf("CameraSAM3ExternalURL = %q", cfg.CameraSAM3ExternalURL)
+	}
+}
+
+func TestLoadRequiresCameraSAM3ExternalURL(t *testing.T) {
+	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
+	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
+	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "CAMERA_SAM3_EXTERNAL_URL") {
+		t.Fatalf("Load() error = %v, want missing CAMERA_SAM3_EXTERNAL_URL", err)
 	}
 }

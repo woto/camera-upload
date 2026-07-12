@@ -92,6 +92,7 @@ func (s *Server) client(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html := strings.Replace(string(web.ClientHTML), "__CAMERA_MOTION_EXTERNAL_URL__", s.cfg.CameraMotionExternalURL, 1)
 	html = strings.Replace(html, "__CAMERA_FISHEYE_EXTERNAL_URL__", s.cfg.CameraFisheyeExternalURL, 1)
+	html = strings.Replace(html, "__CAMERA_SAM3_EXTERNAL_URL__", s.cfg.CameraSAM3ExternalURL, 1)
 	_, _ = w.Write([]byte(html))
 }
 
