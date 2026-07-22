@@ -171,6 +171,9 @@ type exportBody struct {
 
 // listExports returns an upload's saved export records.
 func (s *Server) listExports(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireReadyID(w, chi.URLParam(r, "id")); !ok {
+		return
+	}
 	list, err := s.store.Exports(chi.URLParam(r, "id"))
 	if err != nil {
 		s.notFoundOrError(w, err, "list exports")
@@ -184,6 +187,9 @@ func (s *Server) listExports(w http.ResponseWriter, r *http.Request) {
 
 // getExport returns a single export record.
 func (s *Server) getExport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireReadyID(w, chi.URLParam(r, "id")); !ok {
+		return
+	}
 	cfg, ok, err := s.store.Export(chi.URLParam(r, "id"), chi.URLParam(r, "exportId"))
 	if err != nil {
 		s.notFoundOrError(w, err, "get export")
@@ -198,6 +204,9 @@ func (s *Server) getExport(w http.ResponseWriter, r *http.Request) {
 
 // createExport adds a new export record (params default when omitted).
 func (s *Server) createExport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireReadyID(w, chi.URLParam(r, "id")); !ok {
+		return
+	}
 	var body exportBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
@@ -214,6 +223,9 @@ func (s *Server) createExport(w http.ResponseWriter, r *http.Request) {
 
 // updateExport updates an existing export record's params.
 func (s *Server) updateExport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireReadyID(w, chi.URLParam(r, "id")); !ok {
+		return
+	}
 	var body exportBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
@@ -230,6 +242,9 @@ func (s *Server) updateExport(w http.ResponseWriter, r *http.Request) {
 
 // deleteExport removes an export record.
 func (s *Server) deleteExport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireReadyID(w, chi.URLParam(r, "id")); !ok {
+		return
+	}
 	ok, err := s.store.DeleteExport(chi.URLParam(r, "id"), chi.URLParam(r, "exportId"))
 	if err != nil {
 		s.notFoundOrError(w, err, "delete export")
@@ -258,8 +273,7 @@ func (s *Server) frame(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "frame")
 		return
 	}
-	if !up.Completed {
-		writeError(w, http.StatusConflict, "upload is not complete")
+	if !s.requireReady(w, up) {
 		return
 	}
 
@@ -327,8 +341,7 @@ func (s *Server) setThumbnail(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "set thumbnail")
 		return
 	}
-	if !up.Completed {
-		writeError(w, http.StatusConflict, "upload is not complete")
+	if !s.requireReady(w, up) {
 		return
 	}
 
@@ -367,8 +380,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "proxy")
 		return
 	}
-	if !up.Completed {
-		writeError(w, http.StatusConflict, "upload is not complete")
+	if !s.requireReady(w, up) {
 		return
 	}
 
@@ -510,6 +522,15 @@ func (s *Server) requireReady(w http.ResponseWriter, up store.Upload) bool {
 	return false
 }
 
+func (s *Server) requireReadyID(w http.ResponseWriter, id string) (store.Upload, bool) {
+	up, err := s.store.Get(id)
+	if err != nil {
+		s.notFoundOrError(w, err, "get upload")
+		return store.Upload{}, false
+	}
+	return up, s.requireReady(w, up)
+}
+
 func (s *Server) serveVideo(w http.ResponseWriter, r *http.Request, up store.Upload, path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -537,8 +558,7 @@ func (s *Server) serveVideo(w http.ResponseWriter, r *http.Request, up store.Upl
 
 func (s *Server) thumbnail(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if _, err := s.store.Get(id); err != nil {
-		s.notFoundOrError(w, err, "thumbnail")
+	if _, ok := s.requireReadyID(w, id); !ok {
 		return
 	}
 	path := s.store.ThumbPath(id)

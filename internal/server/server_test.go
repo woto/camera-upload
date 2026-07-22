@@ -339,6 +339,19 @@ func TestDownloadBlocksWhileProcessing(t *testing.T) {
 	}
 }
 
+func TestVideoOperationsBlockWhileProcessing(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "v", 100, 100)
+	if err := store.New(dir).SetProcessing("v", store.Processing{Status: store.ProcessingChecking}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/uploads/v/frame", "/uploads/v/proxy", "/uploads/v/thumbnail", "/uploads/v/exports"} {
+		if rec := doReq(srv, http.MethodGet, path, ""); rec.Code != http.StatusConflict {
+			t.Fatalf("%s: status=%d", path, rec.Code)
+		}
+	}
+}
+
 func TestUpdateUploadAndTags(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "u1", 100, 100)
