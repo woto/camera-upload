@@ -20,7 +20,10 @@ import (
 	"github.com/woto/camera-upload/internal/store"
 )
 
-const processTimeout = 30 * time.Minute
+const (
+	processTimeout      = 30 * time.Minute
+	processingQueueSize = 32
+)
 
 // Processor consumes completed-upload events and produces metadata + thumbnail
 // sidecars.
@@ -30,25 +33,55 @@ type Processor struct {
 	log        *slog.Logger
 	check      func(context.Context, string) (SeekCheckResult, error)
 	transcode  func(context.Context, string, string) error
+	jobs       chan string
 }
 
 // New returns a Processor. If thumbnails is false, thumbnail generation is
 // skipped but metadata is still extracted.
 func New(s *store.Store, thumbnails bool, log *slog.Logger) *Processor {
-	return &Processor{store: s, thumbnails: thumbnails, log: log, check: CheckSeek, transcode: WriteCFR}
+	return &Processor{
+		store: s, thumbnails: thumbnails, log: log, check: CheckSeek, transcode: WriteCFR,
+		jobs: make(chan string, processingQueueSize),
+	}
 }
 
 // Run consumes completed-upload events from ch until ctx is cancelled. It is
 // meant to be launched in its own goroutine and reads the handler's
 // CompleteUploads channel.
 func (p *Processor) Run(ctx context.Context, ch <-chan handler.HookEvent) {
+	go p.work(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case ev := <-ch:
-			p.handle(ev.Upload.ID)
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			p.enqueue(ctx, ev.Upload.ID)
 		}
+	}
+}
+
+func (p *Processor) work(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case id := <-p.jobs:
+			p.handle(id)
+		}
+	}
+}
+
+func (p *Processor) enqueue(ctx context.Context, id string) {
+	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
+		p.log.Error("processing: persist checking", "id", id, "err", err)
+		return
+	}
+	select {
+	case p.jobs <- id:
+	case <-ctx.Done():
 	}
 }
 
@@ -60,10 +93,6 @@ func (p *Processor) handle(id string) {
 	if _, err := os.Stat(dataPath); err != nil {
 		p.log.Error("processing: data file missing", "id", id, "err", err)
 		p.fail(id, err)
-		return
-	}
-	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
-		p.log.Error("processing: persist checking", "id", id, "err", err)
 		return
 	}
 	result, err := p.check(ctx, dataPath)
@@ -125,10 +154,7 @@ func (p *Processor) Retry(id string) error {
 	if err := p.store.ResetDerived(id); err != nil {
 		return err
 	}
-	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
-		return err
-	}
-	go p.handle(id)
+	p.enqueue(context.Background(), id)
 	return nil
 }
 

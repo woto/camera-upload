@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -154,6 +155,50 @@ func TestProcessorRunStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Run did not stop after context cancel")
+	}
+}
+
+func TestProcessorRunAcceptsNextCompletionWhileProcessing(t *testing.T) {
+	dir := t.TempDir()
+	st := store.New(dir)
+	for _, id := range []string{"first", "second"} {
+		if err := os.WriteFile(st.InfoPath(id), []byte(`{"ID":"`+id+`","Size":1,"Offset":1,"SizeIsDeferred":false,"MetaData":{}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(st.DataPath(id), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := New(st, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	first := true
+	p.check = func(context.Context, string) (SeekCheckResult, error) {
+		if first {
+			first = false
+			close(started)
+			<-release
+		}
+		return SeekCheckResult{}, errors.New("stop test processing")
+	}
+
+	ch := make(chan handler.HookEvent)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx, ch)
+
+	ch <- handler.HookEvent{Upload: handler.FileInfo{ID: "first"}}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first upload did not start processing")
+	}
+	select {
+	case ch <- handler.HookEvent{Upload: handler.FileInfo{ID: "second"}}:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("next completion was blocked by ongoing processing")
 	}
 }
 
