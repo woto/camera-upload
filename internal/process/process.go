@@ -132,6 +132,26 @@ func (p *Processor) Retry(id string) error {
 	return nil
 }
 
+// MarkInterrupted marks jobs abandoned by a prior server process as failed.
+// They are retried only through the explicit Retry action.
+func (p *Processor) MarkInterrupted() {
+	uploads, err := p.store.List()
+	if err != nil {
+		p.log.Error("list interrupted processing", "err", err)
+		return
+	}
+	for _, up := range uploads {
+		if up.Processing.Status != store.ProcessingChecking && up.Processing.Status != store.ProcessingConverting {
+			continue
+		}
+		if err := p.store.SetProcessing(up.ID, store.Processing{
+			Status: store.ProcessingFailed, Error: "processing interrupted by restart",
+		}); err != nil {
+			p.log.Error("mark interrupted processing", "id", up.ID, "err", err)
+		}
+	}
+}
+
 // probe runs ffprobe and stores the raw JSON output as the metadata sidecar.
 func (p *Processor) probe(ctx context.Context, id, dataPath string) error {
 	cmd := exec.CommandContext(ctx, "ffprobe",

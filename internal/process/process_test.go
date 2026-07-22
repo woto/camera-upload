@@ -107,3 +107,27 @@ func TestProcessorRunStops(t *testing.T) {
 		t.Fatal("Run did not stop after context cancel")
 	}
 }
+
+func TestMarkInterruptedFailsInProgressUpload(t *testing.T) {
+	dir := t.TempDir()
+	st := store.New(dir)
+	id := "vid1"
+	if err := os.WriteFile(st.InfoPath(id), []byte(`{"ID":"vid1","Size":1,"Offset":1,"SizeIsDeferred":false,"MetaData":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.DataPath(id), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProcessing(id, store.Processing{Status: store.ProcessingConverting}); err != nil {
+		t.Fatal(err)
+	}
+	p := New(st, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p.MarkInterrupted()
+	state, err := st.Processing(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != store.ProcessingFailed || state.Error != "processing interrupted by restart" {
+		t.Fatalf("state = %+v", state)
+	}
+}
