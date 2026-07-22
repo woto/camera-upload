@@ -67,6 +67,19 @@ func TestCheckSeekRunsEmbeddedWorker(t *testing.T) {
 	}
 }
 
+func TestWriteCFRSupportsTemporaryOutputPath(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+
+	dir := t.TempDir()
+	src := dir + "/source"
+	makeTestVideo(t, src)
+	if err := WriteCFR(context.Background(), src, dir+"/converted.tmp"); err != nil {
+		t.Fatalf("write CFR to temporary path: %v", err)
+	}
+}
+
 // makeTestVideo generates a tiny test video and stores it at dst, which has no
 // file extension (mirroring tusd's filestore naming). ffmpeg needs an explicit
 // extension to choose a muxer, so we generate to a .mp4 temp file and rename.

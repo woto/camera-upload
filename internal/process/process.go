@@ -205,7 +205,8 @@ func WriteCFR(ctx context.Context, src, dst string) error {
 		"-vf", "fps=30", "-fps_mode", "cfr",
 		"-c:v", "libx264", "-preset", "medium", "-crf", "18",
 		"-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-		"-movflags", "+faststart", dst)
+		"-movflags", "+faststart",
+		"-f", "mp4", dst)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("run cfr conversion: %w: %s", err, out)
