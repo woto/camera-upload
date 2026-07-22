@@ -62,9 +62,13 @@ func TestProcessorMetadataAndThumbnail(t *testing.T) {
 	st := store.New(dir)
 	id := "vid1"
 	makeTestVideo(t, st.DataPath(id))
+	if err := os.WriteFile(st.InfoPath(id), []byte(`{"ID":"vid1","Size":1,"Offset":1,"SizeIsDeferred":false,"MetaData":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	p := New(st, true, log)
+	p.check = func(context.Context, string) (SeekCheckResult, error) { return SeekCheckResult{Samples: 1}, nil }
 	p.handle(id)
 
 	// Metadata sidecar should exist and contain ffprobe's "streams".
