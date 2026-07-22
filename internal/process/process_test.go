@@ -31,6 +31,42 @@ func TestSeekCheckRejectsInvalidWorkerJSON(t *testing.T) {
 	}
 }
 
+func TestSeekCheckCommandUsesEmbeddedScript(t *testing.T) {
+	cmd := newSeekCheckCommand(context.Background(), "video.mp4")
+	if got, want := cmd.Args[1], "-"; got != want {
+		t.Fatalf("script argument = %q, want %q", got, want)
+	}
+	if cmd.Stdin == nil {
+		t.Fatal("seek-check command has no embedded script on stdin")
+	}
+	worker, err := io.ReadAll(cmd.Stdin)
+	if err != nil {
+		t.Fatalf("read embedded worker: %v", err)
+	}
+	if len(worker) == 0 {
+		t.Fatal("embedded worker is empty")
+	}
+}
+
+func TestCheckSeekRunsEmbeddedWorker(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if err := exec.Command("python3", "-c", "import cv2").Run(); err != nil {
+		t.Skip("Python OpenCV not available")
+	}
+
+	video := t.TempDir() + "/video"
+	makeTestVideo(t, video)
+	result, err := CheckSeek(context.Background(), video)
+	if err != nil {
+		t.Fatalf("run embedded seek checker: %v", err)
+	}
+	if result.Samples <= 0 {
+		t.Fatalf("samples = %d, want positive", result.Samples)
+	}
+}
+
 // makeTestVideo generates a tiny test video and stores it at dst, which has no
 // file extension (mirroring tusd's filestore naming). ffmpeg needs an explicit
 // extension to choose a muxer, so we generate to a .mp4 temp file and rename.

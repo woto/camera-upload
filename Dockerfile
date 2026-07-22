@@ -28,7 +28,6 @@ RUN apt-get update -qq && \
 
 WORKDIR /app
 COPY --from=build /out/server /usr/local/bin/server
-COPY internal/process/check_seek.py /app/check_seek.py
 
 ENV PORT=8000 \
     DATA_DIR=/data
