@@ -8,6 +8,22 @@ import (
 	"path/filepath"
 )
 
+// ResetDerived removes artifacts that are regenerated from the working video.
+// It intentionally preserves the uploaded source, .info and user metadata.
+func (s *Store) ResetDerived(id string) error {
+	paths := []string{s.CFRPath(id), s.MetaPath(id), s.ThumbPath(id)}
+	proxies, _ := filepath.Glob(filepath.Join(s.dir, id+".proxy_*.mp4"))
+	temps, _ := filepath.Glob(filepath.Join(s.dir, id+".cfr.mp4.*.tmp"))
+	paths = append(paths, proxies...)
+	paths = append(paths, temps...)
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove derived artifact: %w", err)
+		}
+	}
+	return nil
+}
+
 // ProcessingStatus is the lifecycle state of post-upload video preparation.
 type ProcessingStatus string
 

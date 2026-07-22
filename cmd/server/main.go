@@ -91,7 +91,7 @@ func run(log *slog.Logger) error {
 	// Periodically purge stale incomplete uploads.
 	go cleanupLoop(ctx, st, cfg.IncompleteTTL, log)
 
-	handler := server.New(cfg, st, tusHandler.HTTP, log)
+	handler := server.New(cfg, st, tusHandler.HTTP, log, proc.Retry)
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,

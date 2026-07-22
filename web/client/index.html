@@ -266,8 +266,10 @@
       const processing = (u.processing || {}).status;
       const label = processing === 'checking' ? 'checking video' : processing === 'converting' ? 'converting to CFR' : processing === 'failed' ? 'processing failed' : processing === 'ready' ? 'ready' : '';
       if (st) st.innerHTML = label
-        ? '<div class="status-badges"><span class="badge ' + (processing === 'ready' ? 'done' : processing === 'failed' ? 'absent' : 'progress') + '">' + label + '</span><span data-persp="' + u.id + '">' + (processing === 'ready' ? perspBadgeHTML(u.id) : '') + '</span></div>'
+        ? '<div class="status-badges"><span class="badge ' + (processing === 'ready' ? 'done' : processing === 'failed' ? 'absent' : 'progress') + '">' + label + '</span>' + (processing === 'failed' ? '<button class="btn" data-retry="' + u.id + '">Retry</button>' : '') + '<span data-persp="' + u.id + '">' + (processing === 'ready' ? perspBadgeHTML(u.id) : '') + '</span></div>'
         : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
+      const retry = st && st.querySelector('[data-retry]');
+      if (retry) retry.onclick = async () => { await api('POST', '/uploads/' + u.id + '/retry-processing'); refresh(true); };
       // The thumbnail is generated server-side only after the upload finishes.
       // Since a completing upload does not change the row set (no full re-render),
       // insert the image here once it becomes available.

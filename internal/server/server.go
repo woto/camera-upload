@@ -24,6 +24,7 @@ type Server struct {
 	store      *store.Store
 	log        *slog.Logger
 	proxyLocks keyedMutex
+	retry      func(string) error
 }
 
 // keyedMutex serializes work per key (used so concurrent requests for the same
@@ -50,8 +51,11 @@ func (k *keyedMutex) lock(key string) func() {
 
 // New builds the chi router wiring together the management API, the embedded
 // client and the tusd protocol handler mounted at cfg.BasePath.
-func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.Logger) http.Handler {
+func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.Logger, retry ...func(string) error) http.Handler {
 	s := &Server{cfg: cfg, store: st, log: log}
+	if len(retry) > 0 {
+		s.retry = retry[0]
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -70,6 +74,7 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 		r.Delete("/{id}", s.deleteUpload)
 		r.Get("/{id}/download", s.downloadUpload)
 		r.Get("/{id}/original", s.downloadOriginal)
+		r.Post("/{id}/retry-processing", s.retryProcessing)
 		r.Get("/{id}/frame", s.frame)
 		r.Get("/{id}/proxy", s.proxy)
 		r.Get("/{id}/thumbnail", s.thumbnail)

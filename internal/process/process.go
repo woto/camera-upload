@@ -113,6 +113,25 @@ func (p *Processor) fail(id string, err error) {
 	_ = p.store.SetProcessing(id, store.Processing{Status: store.ProcessingFailed, Error: err.Error()})
 }
 
+// Retry restarts a failed upload's processing without touching its source file.
+func (p *Processor) Retry(id string) error {
+	state, err := p.store.Processing(id)
+	if err != nil {
+		return err
+	}
+	if state.Status != store.ProcessingFailed {
+		return fmt.Errorf("processing is not failed")
+	}
+	if err := p.store.ResetDerived(id); err != nil {
+		return err
+	}
+	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
+		return err
+	}
+	go p.handle(id)
+	return nil
+}
+
 // probe runs ffprobe and stores the raw JSON output as the metadata sidecar.
 func (p *Processor) probe(ctx context.Context, id, dataPath string) error {
 	cmd := exec.CommandContext(ctx, "ffprobe",

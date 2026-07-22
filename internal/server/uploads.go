@@ -506,6 +506,28 @@ func (s *Server) downloadOriginal(w http.ResponseWriter, r *http.Request) {
 	s.serveVideo(w, r, up, s.store.DataPath(id))
 }
 
+func (s *Server) retryProcessing(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	up, err := s.store.Get(id)
+	if err != nil {
+		s.notFoundOrError(w, err, "retry processing")
+		return
+	}
+	if up.Processing.Status != store.ProcessingFailed {
+		writeError(w, http.StatusConflict, "processing is not failed")
+		return
+	}
+	if s.retry == nil {
+		writeError(w, http.StatusServiceUnavailable, "retry unavailable")
+		return
+	}
+	if err := s.retry(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to retry processing")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) requireReady(w http.ResponseWriter, up store.Upload) bool {
 	if !up.Completed {
 		writeError(w, http.StatusConflict, "upload is not complete")
