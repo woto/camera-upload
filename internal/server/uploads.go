@@ -499,8 +499,7 @@ func (s *Server) downloadOriginal(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "download original")
 		return
 	}
-	if !up.Completed {
-		writeError(w, http.StatusConflict, "upload is not complete")
+	if !s.requireReady(w, up) {
 		return
 	}
 	s.serveVideo(w, r, up, s.store.DataPath(id))
