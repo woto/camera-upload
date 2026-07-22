@@ -20,7 +20,7 @@ import (
 	"github.com/woto/camera-upload/internal/store"
 )
 
-const processTimeout = 2 * time.Minute
+const processTimeout = 30 * time.Minute
 
 // Processor consumes completed-upload events and produces metadata + thumbnail
 // sidecars.
@@ -28,12 +28,14 @@ type Processor struct {
 	store      *store.Store
 	thumbnails bool
 	log        *slog.Logger
+	check      func(context.Context, string) (SeekCheckResult, error)
+	transcode  func(context.Context, string, string) error
 }
 
 // New returns a Processor. If thumbnails is false, thumbnail generation is
 // skipped but metadata is still extracted.
 func New(s *store.Store, thumbnails bool, log *slog.Logger) *Processor {
-	return &Processor{store: s, thumbnails: thumbnails, log: log}
+	return &Processor{store: s, thumbnails: thumbnails, log: log, check: CheckSeek, transcode: WriteCFR}
 }
 
 // Run consumes completed-upload events from ch until ctx is cancelled. It is
@@ -57,20 +59,97 @@ func (p *Processor) handle(id string) {
 	dataPath := p.store.DataPath(id)
 	if _, err := os.Stat(dataPath); err != nil {
 		p.log.Error("processing: data file missing", "id", id, "err", err)
+		p.fail(id, err)
 		return
 	}
-
-	if err := p.probe(ctx, id, dataPath); err != nil {
-		p.log.Error("processing: ffprobe failed", "id", id, "err", err)
+	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
+		p.log.Error("processing: persist checking", "id", id, "err", err)
+		return
 	}
-
+	result, err := p.check(ctx, dataPath)
+	if err != nil {
+		p.fail(id, err)
+		return
+	}
+	if result.NeedsCFR() {
+		if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingConverting}); err != nil {
+			p.fail(id, err)
+			return
+		}
+		tmp := fmt.Sprintf("%s.%d.tmp", p.store.CFRPath(id), time.Now().UnixNano())
+		defer os.Remove(tmp)
+		if err := p.transcode(ctx, dataPath, tmp); err != nil {
+			p.fail(id, err)
+			return
+		}
+		if err := os.Rename(tmp, p.store.CFRPath(id)); err != nil {
+			p.fail(id, err)
+			return
+		}
+		if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingReady, WorkingSource: store.WorkingConverted}); err != nil {
+			p.fail(id, err)
+			return
+		}
+	} else if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingReady, WorkingSource: store.WorkingOriginal}); err != nil {
+		p.fail(id, err)
+		return
+	}
+	working := p.store.WorkingPath(id)
+	if err := p.probe(ctx, id, working); err != nil {
+		p.fail(id, err)
+		return
+	}
 	if p.thumbnails {
-		if err := p.thumbnail(ctx, id, dataPath); err != nil {
-			p.log.Error("processing: thumbnail failed", "id", id, "err", err)
+		if err := p.thumbnail(ctx, id, working); err != nil {
+			p.fail(id, err)
+			return
 		}
 	}
-
 	p.log.Info("processing: done", "id", id)
+}
+
+func (p *Processor) fail(id string, err error) {
+	p.log.Error("processing failed", "id", id, "err", err)
+	_ = p.store.SetProcessing(id, store.Processing{Status: store.ProcessingFailed, Error: err.Error()})
+}
+
+// Retry restarts a failed upload's processing without touching its source file.
+func (p *Processor) Retry(id string) error {
+	state, err := p.store.Processing(id)
+	if err != nil {
+		return err
+	}
+	if state.Status != store.ProcessingFailed {
+		return fmt.Errorf("processing is not failed")
+	}
+	if err := p.store.ResetDerived(id); err != nil {
+		return err
+	}
+	if err := p.store.SetProcessing(id, store.Processing{Status: store.ProcessingChecking}); err != nil {
+		return err
+	}
+	go p.handle(id)
+	return nil
+}
+
+// MarkInterrupted marks jobs abandoned by a prior server process as failed.
+// They are retried only through the explicit Retry action.
+func (p *Processor) MarkInterrupted() {
+	uploads, err := p.store.List()
+	if err != nil {
+		p.log.Error("list interrupted processing", "err", err)
+		return
+	}
+	for _, up := range uploads {
+		if up.Processing.Status != store.ProcessingChecking && up.Processing.Status != store.ProcessingConverting {
+			continue
+		}
+		if err := p.store.SetProcessing(up.ID, store.Processing{
+			Status: store.ProcessingFailed, Error: "processing interrupted by restart",
+		}); err != nil {
+			p.log.Error("mark interrupted processing", "id", up.ID, "err", err)
+		}
+	}
 }
 
 // probe runs ffprobe and stores the raw JSON output as the metadata sidecar.
@@ -114,6 +193,22 @@ func WriteThumbnail(ctx context.Context, src, dst string, at float64) error {
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("run ffmpeg: %w: %s", err, out)
+	}
+	return nil
+}
+
+// WriteCFR creates a broadly decodable 30 fps H.264/AAC working copy.
+func WriteCFR(ctx context.Context, src, dst string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-nostdin", "-y", "-i", src,
+		"-map", "0:v:0", "-map", "0:a?",
+		"-vf", "fps=30", "-fps_mode", "cfr",
+		"-c:v", "libx264", "-preset", "medium", "-crf", "18",
+		"-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+		"-movflags", "+faststart", dst)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("run cfr conversion: %w: %s", err, out)
 	}
 	return nil
 }

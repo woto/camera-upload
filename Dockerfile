@@ -21,11 +21,14 @@ FROM debian:bookworm-slim
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y \
       ca-certificates \
-      ffmpeg && \
+      ffmpeg \
+      python3 \
+      python3-opencv && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 WORKDIR /app
 COPY --from=build /out/server /usr/local/bin/server
+COPY internal/process/check_seek.py /app/check_seek.py
 
 ENV PORT=8000 \
     DATA_DIR=/data

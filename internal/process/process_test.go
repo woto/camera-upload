@@ -15,6 +15,22 @@ import (
 	"github.com/woto/camera-upload/internal/store"
 )
 
+func TestSeekCheckParsesMismatchResult(t *testing.T) {
+	got, err := parseSeekCheck([]byte(`{"samples":60,"mismatches":[100,200]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.NeedsCFR() {
+		t.Fatal("expected CFR conversion")
+	}
+}
+
+func TestSeekCheckRejectsInvalidWorkerJSON(t *testing.T) {
+	if _, err := parseSeekCheck([]byte("not-json")); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 // makeTestVideo generates a tiny test video and stores it at dst, which has no
 // file extension (mirroring tusd's filestore naming). ffmpeg needs an explicit
 // extension to choose a muxer, so we generate to a .mp4 temp file and rename.
@@ -46,9 +62,13 @@ func TestProcessorMetadataAndThumbnail(t *testing.T) {
 	st := store.New(dir)
 	id := "vid1"
 	makeTestVideo(t, st.DataPath(id))
+	if err := os.WriteFile(st.InfoPath(id), []byte(`{"ID":"vid1","Size":1,"Offset":1,"SizeIsDeferred":false,"MetaData":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	p := New(st, true, log)
+	p.check = func(context.Context, string) (SeekCheckResult, error) { return SeekCheckResult{Samples: 1}, nil }
 	p.handle(id)
 
 	// Metadata sidecar should exist and contain ffprobe's "streams".
@@ -85,5 +105,29 @@ func TestProcessorRunStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Run did not stop after context cancel")
+	}
+}
+
+func TestMarkInterruptedFailsInProgressUpload(t *testing.T) {
+	dir := t.TempDir()
+	st := store.New(dir)
+	id := "vid1"
+	if err := os.WriteFile(st.InfoPath(id), []byte(`{"ID":"vid1","Size":1,"Offset":1,"SizeIsDeferred":false,"MetaData":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.DataPath(id), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProcessing(id, store.Processing{Status: store.ProcessingConverting}); err != nil {
+		t.Fatal(err)
+	}
+	p := New(st, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p.MarkInterrupted()
+	state, err := st.Processing(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != store.ProcessingFailed || state.Error != "processing interrupted by restart" {
+		t.Fatalf("state = %+v", state)
 	}
 }

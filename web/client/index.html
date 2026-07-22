@@ -187,9 +187,10 @@
         const thumb = u.has_thumbnail
           ? '<img class="thumb" src="/uploads/' + u.id + '/thumbnail?ts=' + Date.now() + '" alt="" />'
           : '<div class="thumb"></div>';
-        const frameBtn = u.completed ? '<button class="btn frame" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
+        const ready = u.processing && u.processing.status === 'ready';
+        const frameBtn = ready ? '<button class="btn frame" data-act="frame" data-id="' + u.id + '">Frame</button>' : '';
         // Export panel: download original + build a configurable proxy URL for camera-motion.
-        const exportBtn = u.completed ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Video</button>' : '';
+        const exportBtn = ready ? '<button class="btn export" data-act="export" data-id="' + u.id + '">Video</button>' : '';
         return '' +
           '<tr data-row="' + u.id + '">' +
             '<td data-thumbcell="' + u.id + '">' + thumb + '</td>' +
@@ -262,9 +263,13 @@
       const bar = uploadsEl.querySelector('[data-bar="' + u.id + '"]');
       const st = uploadsEl.querySelector('[data-status="' + u.id + '"]');
       if (bar) bar.style.width = u.percent.toFixed(1) + '%';
-      if (st) st.innerHTML = u.completed
-        ? '<div class="status-badges"><span class="badge done">ready</span><span data-persp="' + u.id + '">' + perspBadgeHTML(u.id) + '</span></div>'
+      const processing = (u.processing || {}).status;
+      const label = processing === 'checking' ? 'checking video' : processing === 'converting' ? 'converting to CFR' : processing === 'failed' ? 'processing failed' : processing === 'ready' ? 'ready' : '';
+      if (st) st.innerHTML = label
+        ? '<div class="status-badges"><span class="badge ' + (processing === 'ready' ? 'done' : processing === 'failed' ? 'absent' : 'progress') + '">' + label + '</span>' + (processing === 'failed' ? '<button class="btn" data-retry="' + u.id + '">Retry</button>' : '') + '<span data-persp="' + u.id + '">' + (processing === 'ready' ? perspBadgeHTML(u.id) : '') + '</span></div>'
         : '<span class="badge progress">' + u.percent.toFixed(1) + '%</span>';
+      const retry = st && st.querySelector('[data-retry]');
+      if (retry) retry.onclick = async () => { await api('POST', '/uploads/' + u.id + '/retry-processing'); refresh(true); };
       // The thumbnail is generated server-side only after the upload finishes.
       // Since a completing upload does not change the row set (no full re-render),
       // insert the image here once it becomes available.
@@ -370,18 +375,23 @@
       if (!exportOpen[id]) { box.innerHTML = ''; return; }
 
       const dlUrl = location.origin + '/uploads/' + id + '/download';
+      const originalUrl = location.origin + '/uploads/' + id + '/original';
+      const upload = currentUploads.find(u => u.id === id) || {};
+      const source = ((upload.processing || {}).working_source === 'converted') ? 'Converted' : 'Original';
       box.innerHTML =
         '<div class="picker export-panel">' +
           '<div class="row picker-head"><span class="panel-title"><b>Video</b>' +
             '<span class="panel-for">' + esc(rowName(id)) + '</span></span>' +
             '<button class="btn close" data-closeexport="' + id + '">Close ✕</button></div>' +
 
-          '<h4>Original</h4>' +
+          '<h4>Working video · ' + source + '</h4>' +
           '<div class="row">' +
-            '<a class="btn" href="' + dlUrl + '">Download original</a>' +
+            '<a class="btn" href="' + dlUrl + '">Download</a>' +
             '<input class="url-box" readonly value="' + dlUrl + '" data-origurl />' +
             '<button class="btn" data-copyorig>Copy</button>' +
           '</div>' +
+
+          '<h4>Original</h4><div class="row"><a class="btn" href="' + originalUrl + '">Download</a><input class="url-box" readonly value="' + originalUrl + '" data-originalurl /><button class="btn" data-copyoriginal>Copy</button></div>' +
 
           '<h4>Videos for camera-motion</h4>' +
           '<div class="row"><button class="btn primary" data-addexport>+ Add video</button></div>' +
@@ -389,6 +399,7 @@
         '</div>';
 
       box.querySelector('[data-copyorig]').onclick = e => copyButton(e.currentTarget, dlUrl, 'Original URL:');
+      box.querySelector('[data-copyoriginal]').onclick = e => copyButton(e.currentTarget, originalUrl, 'Original URL:');
       box.querySelector('[data-closeexport="' + id + '"]').onclick = () => toggleExport(id);
       box.querySelector('[data-addexport]').onclick = async () => {
         await api('POST', '/uploads/' + id + '/exports', { fps: 0.1, width: 480, gray: true });
@@ -690,7 +701,7 @@
         // Include completion state in the signature so that when an upload
         // finishes (gaining Frame/Export/Download actions) the row is fully
         // re-rendered — not just its progress badge.
-        const sig = uploads.map(u => u.id + ':' + (u.completed ? 1 : 0)).join(',');
+        const sig = uploads.map(u => u.id + ':' + (u.completed ? 1 : 0) + ':' + ((u.processing || {}).status || '')).join(',');
         if (force || sig !== renderedIds) {
           renderedIds = sig;
           render(uploads);

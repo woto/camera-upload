@@ -47,6 +47,7 @@ type Upload struct {
 	HasThumbnail bool            `json:"has_thumbnail"`
 	ThumbnailT   *float64        `json:"thumbnail_t,omitempty"`
 	VideoMeta    json.RawMessage `json:"video_meta,omitempty"`
+	Processing   Processing      `json:"processing"`
 }
 
 // userMeta holds the user-editable fields stored in the {id}.user.json sidecar.
@@ -181,6 +182,14 @@ func (s *Store) Get(id string) (Upload, error) {
 	if up.Tags == nil {
 		up.Tags = []string{}
 	}
+	processing, err := s.Processing(id)
+	if err != nil {
+		return Upload{}, err
+	}
+	if processing.Status == "" && up.Completed {
+		processing = Processing{Status: ProcessingReady, WorkingSource: WorkingOriginal}
+	}
+	up.Processing = processing
 
 	return up, nil
 }
@@ -283,10 +292,14 @@ func (s *Store) Delete(id string) error {
 	if _, err := os.Stat(s.InfoPath(id)); errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
-	paths := []string{s.DataPath(id), s.InfoPath(id), s.MetaPath(id), s.ThumbPath(id), s.UserPath(id)}
+	paths := []string{s.DataPath(id), s.InfoPath(id), s.MetaPath(id), s.ThumbPath(id), s.UserPath(id), s.ExportsPath(id),
+		s.ProcessingPath(id), s.CFRPath(id)}
 	// Proxy caches have parameter-dependent names, so collect them by glob.
 	if proxies, err := filepath.Glob(filepath.Join(s.dir, id+".proxy_*.mp4")); err == nil {
 		paths = append(paths, proxies...)
+	}
+	if temporary, err := filepath.Glob(filepath.Join(s.dir, id+".cfr.mp4.*.tmp")); err == nil {
+		paths = append(paths, temporary...)
 	}
 	var firstErr error
 	for _, p := range paths {

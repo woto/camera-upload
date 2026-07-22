@@ -86,12 +86,13 @@ func run(log *slog.Logger) error {
 
 	// Consume completed uploads for post-processing (ffprobe + thumbnail).
 	proc := process.New(st, cfg.Thumbnails, log)
+	proc.MarkInterrupted()
 	go proc.Run(ctx, tusHandler.CompleteUploads)
 
 	// Periodically purge stale incomplete uploads.
 	go cleanupLoop(ctx, st, cfg.IncompleteTTL, log)
 
-	handler := server.New(cfg, st, tusHandler.HTTP, log)
+	handler := server.New(cfg, st, tusHandler.HTTP, log, proc.Retry)
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,
