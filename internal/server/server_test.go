@@ -307,6 +307,38 @@ func TestDownloadComplete(t *testing.T) {
 	}
 }
 
+func TestDownloadUsesWorkingFileAndOriginalUsesSource(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "v", 8, 8)
+	st := store.New(dir)
+	if err := os.WriteFile(st.DataPath("v"), []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.CFRPath("v"), []byte("converted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProcessing("v", store.Processing{Status: store.ProcessingReady, WorkingSource: store.WorkingConverted}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doReq(srv, http.MethodGet, "/uploads/v/download", ""); rec.Code != http.StatusOK || rec.Body.String() != "converted" {
+		t.Fatalf("download: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(srv, http.MethodGet, "/uploads/v/original", ""); rec.Code != http.StatusOK || rec.Body.String() != "original" {
+		t.Fatalf("original: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDownloadBlocksWhileProcessing(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "v", 100, 100)
+	if err := store.New(dir).SetProcessing("v", store.Processing{Status: store.ProcessingChecking}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doReq(srv, http.MethodGet, "/uploads/v/download", ""); rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
 func TestUpdateUploadAndTags(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "u1", 100, 100)

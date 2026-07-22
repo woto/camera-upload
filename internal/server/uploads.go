@@ -474,12 +474,44 @@ func (s *Server) downloadUpload(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "download upload")
 		return
 	}
+	if !s.requireReady(w, up) {
+		return
+	}
+	s.serveVideo(w, r, up, s.store.WorkingPath(id))
+}
+
+func (s *Server) downloadOriginal(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	up, err := s.store.Get(id)
+	if err != nil {
+		s.notFoundOrError(w, err, "download original")
+		return
+	}
 	if !up.Completed {
 		writeError(w, http.StatusConflict, "upload is not complete")
 		return
 	}
+	s.serveVideo(w, r, up, s.store.DataPath(id))
+}
 
-	f, err := os.Open(s.store.DataPath(id))
+func (s *Server) requireReady(w http.ResponseWriter, up store.Upload) bool {
+	if !up.Completed {
+		writeError(w, http.StatusConflict, "upload is not complete")
+		return false
+	}
+	if up.Processing.Status == store.ProcessingReady {
+		return true
+	}
+	if up.Processing.Status == store.ProcessingFailed {
+		writeError(w, http.StatusConflict, "processing failed")
+	} else {
+		writeError(w, http.StatusConflict, "video is processing")
+	}
+	return false
+}
+
+func (s *Server) serveVideo(w http.ResponseWriter, r *http.Request, up store.Upload, path string) {
+	f, err := os.Open(path)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "data not found")
 		return
@@ -494,7 +526,7 @@ func (s *Server) downloadUpload(w http.ResponseWriter, r *http.Request) {
 
 	name := up.Filename
 	if name == "" {
-		name = id
+		name = up.ID
 	}
 	if up.FileType != "" {
 		w.Header().Set("Content-Type", up.FileType)

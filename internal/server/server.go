@@ -69,6 +69,7 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 		r.Patch("/{id}", s.updateUpload)
 		r.Delete("/{id}", s.deleteUpload)
 		r.Get("/{id}/download", s.downloadUpload)
+		r.Get("/{id}/original", s.downloadOriginal)
 		r.Get("/{id}/frame", s.frame)
 		r.Get("/{id}/proxy", s.proxy)
 		r.Get("/{id}/thumbnail", s.thumbnail)
