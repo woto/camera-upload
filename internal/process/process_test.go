@@ -15,6 +15,22 @@ import (
 	"github.com/woto/camera-upload/internal/store"
 )
 
+func TestSeekCheckParsesMismatchResult(t *testing.T) {
+	got, err := parseSeekCheck([]byte(`{"samples":60,"mismatches":[100,200]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.NeedsCFR() {
+		t.Fatal("expected CFR conversion")
+	}
+}
+
+func TestSeekCheckRejectsInvalidWorkerJSON(t *testing.T) {
+	if _, err := parseSeekCheck([]byte("not-json")); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 // makeTestVideo generates a tiny test video and stores it at dst, which has no
 // file extension (mirroring tusd's filestore naming). ffmpeg needs an explicit
 // extension to choose a muxer, so we generate to a .mp4 temp file and rename.
