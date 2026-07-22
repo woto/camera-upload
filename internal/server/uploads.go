@@ -281,7 +281,7 @@ func (s *Server) frame(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), frameTimeout)
 	defer cancel()
 
-	img, err := process.ExtractFrame(ctx, s.store.DataPath(id), at)
+	img, err := process.ExtractFrame(ctx, s.store.WorkingPath(id), at)
 	if err != nil {
 		s.log.Error("extract frame", "id", id, "t", at, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to extract frame")
@@ -356,7 +356,7 @@ func (s *Server) setThumbnail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), frameTimeout)
 	defer cancel()
 
-	if err := process.WriteThumbnail(ctx, s.store.DataPath(id), s.store.ThumbPath(id), body.T); err != nil {
+	if err := process.WriteThumbnail(ctx, s.store.WorkingPath(id), s.store.ThumbPath(id), body.T); err != nil {
 		s.log.Error("set thumbnail", "id", id, "t", body.T, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to set thumbnail")
 		return
@@ -403,7 +403,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 			// corrupt the cached file). Cleaned up on every exit path.
 			tmp := fmt.Sprintf("%s.%d.tmp", dst, time.Now().UnixNano())
 			defer os.Remove(tmp)
-			if err := process.WriteProxy(ctx, s.store.DataPath(id), tmp, fps, width, gray); err != nil {
+			if err := process.WriteProxy(ctx, s.store.WorkingPath(id), tmp, fps, width, gray); err != nil {
 				s.log.Error("build proxy", "id", id, "err", err)
 				writeError(w, http.StatusInternalServerError, "failed to build proxy")
 				return
