@@ -620,7 +620,7 @@
     function openSAM3(imageUrls) {
       if (!CAMERA_SAM3_EXTERNAL_URL || !imageUrls.length) return;
       const sam3Origin = new URL(CAMERA_SAM3_EXTERNAL_URL).origin;
-      const child = window.open(CAMERA_SAM3_EXTERNAL_URL + '/client', 'camera_sam3');
+      const child = window.open(CAMERA_SAM3_EXTERNAL_URL + '/object-search', 'camera_sam3');
       if (!child) return;
       const handoff = event => {
         if (event.source !== child || event.origin !== sam3Origin || !event.data || event.data.type !== 'camera-sam3:ready') return;

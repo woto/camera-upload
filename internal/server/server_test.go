@@ -132,6 +132,25 @@ func TestClientInjectsCameraSAM3URL(t *testing.T) {
 	}
 }
 
+func TestClientOpensCameraSAM3ObjectSearch(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500"}
+	st := store.New(dir)
+	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(cfg, st, tusStub, log)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "CAMERA_SAM3_EXTERNAL_URL + '/object-search'") {
+		t.Errorf("served client does not open the camera-sam3 object-search page")
+	}
+	if strings.Contains(body, "CAMERA_SAM3_EXTERNAL_URL + '/client'") {
+		t.Errorf("served client still opens the camera-sam3 landing page")
+	}
+}
+
 func doReq(srv http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	var r *http.Request
 	if body == "" {
