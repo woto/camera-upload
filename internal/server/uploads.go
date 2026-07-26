@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +24,8 @@ import (
 const frameTimeout = 30 * time.Second
 
 const defaultPageSize = 20
+
+const maxAnalysisBodyBytes = 2 << 20
 
 // listUploads supports filtering by name (?q=) and tags (?tag=, repeatable, AND
 // semantics) plus pagination (?page=, ?page_size=). Results stay newest-first.
@@ -200,6 +205,55 @@ func (s *Server) getExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// putExportAnalysis accepts the completed motion timeline for one saved export.
+// camera-motion is the only writer and authenticates with the shared internal token.
+func (s *Server) putExportAnalysis(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizedInternalRequest(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAnalysisBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input store.MotionAnalysisInput
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	uploadID := chi.URLParam(r, "id")
+	upload, err := s.store.Get(uploadID)
+	if err != nil {
+		s.notFoundOrError(w, err, "get upload for analysis")
+		return
+	}
+	cfg, err := s.store.SetExportAnalysis(uploadID, chi.URLParam(r, "exportId"), input, upload.Duration)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, cfg)
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrExportNotFound):
+		writeError(w, http.StatusNotFound, "upload or export not found")
+	case errors.Is(err, store.ErrExportConflict):
+		writeError(w, http.StatusConflict, "analysis conflicts with export")
+	case errors.Is(err, store.ErrInvalidAnalysis):
+		writeError(w, http.StatusBadRequest, "invalid motion analysis")
+	default:
+		s.log.Error("store export analysis", "upload_id", uploadID, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+	}
+}
+
+func (s *Server) authorizedInternalRequest(r *http.Request) bool {
+	want := sha256.Sum256([]byte("Bearer " + s.cfg.InternalToken))
+	got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
 }
 
 // createExport adds a new export record (params default when omitted).
@@ -385,9 +439,36 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	fps := clampFloat(parseFloatDefault(q.Get("fps"), 4), 0.1, 60)
-	width := clampInt(atoiDefault(q.Get("width"), 480), 64, 1920)
-	gray := q.Get("gray") != "0" && q.Get("gray") != "false" // grayscale by default
+	cfg := store.NormalizeExport(store.ExportConfig{
+		FPS:   parseFloatDefault(q.Get("fps"), 4),
+		Width: atoiDefault(q.Get("width"), 480),
+		Gray:  q.Get("gray") != "0" && q.Get("gray") != "false", // grayscale by default
+	})
+	s.serveProxy(w, r, id, cfg)
+}
+
+// exportProxy serves the canonical proxy for a saved export version. Query
+// overrides are intentionally ignored: stored settings define the media.
+func (s *Server) exportProxy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireReadyID(w, id); !ok {
+		return
+	}
+	cfg, ok, err := s.store.Export(id, chi.URLParam(r, "exportId"))
+	if err != nil {
+		s.notFoundOrError(w, err, "get export proxy")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "export not found")
+		return
+	}
+	s.serveProxy(w, r, id, cfg)
+}
+
+func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request, id string, cfg store.ExportConfig) {
+	cfg = store.NormalizeExport(cfg)
+	fps, width, gray := cfg.FPS, cfg.Width, cfg.Gray
 
 	dst := s.store.ProxyPath(id, fps, width, gray)
 
@@ -438,26 +519,6 @@ func parseFloatDefault(s string, def float64) float64 {
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return def
-	}
-	return v
-}
-
-func clampFloat(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
 	}
 	return v
 }

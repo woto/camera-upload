@@ -81,8 +81,10 @@ func New(cfg config.Config, st *store.Store, tusHandler http.Handler, log *slog.
 		r.Post("/{id}/thumbnail", s.setThumbnail)
 		r.Get("/{id}/exports", s.listExports)
 		r.Get("/{id}/exports/{exportId}", s.getExport)
+		r.Get("/{id}/exports/{exportId}/proxy", s.exportProxy)
 		r.Post("/{id}/exports", s.createExport)
 		r.Put("/{id}/exports/{exportId}", s.updateExport)
+		r.Put("/{id}/exports/{exportId}/analysis", s.putExportAnalysis)
 		r.Delete("/{id}/exports/{exportId}", s.deleteExport)
 	})
 
@@ -139,7 +141,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, HEAD, DELETE, OPTIONS")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, HEAD, DELETE, OPTIONS")
 		h.Set("Access-Control-Allow-Headers",
 			"Authorization, Content-Type, Location, Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Upload-Checksum, X-Requested-With, X-HTTP-Method-Override")
 		h.Set("Access-Control-Expose-Headers",

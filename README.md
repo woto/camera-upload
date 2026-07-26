@@ -32,6 +32,10 @@
 | `POST` | `/uploads/{id}/retry-processing` | повторить неудачную проверку/конвертацию |
 | `GET` | `/uploads/{id}/frame?t=<sec>` | кадр (JPEG) на заданной секунде |
 | `GET` | `/uploads/{id}/proxy?fps=&width=&gray=` | компактный прокси-клип (H.264) для анализаторов; генерится по запросу и кэшируется |
+| `GET` | `/uploads/{id}/exports` | сохранённые версии прокси вместе с последним успешным motion analysis |
+| `GET` | `/uploads/{id}/exports/{exportId}` | одна версия прокси и её motion analysis |
+| `GET` | `/uploads/{id}/exports/{exportId}/proxy` | канонический прокси версии; query-параметры игнорируются |
+| `PUT` | `/uploads/{id}/exports/{exportId}/analysis` | внутренняя запись результата camera-motion (Bearer token) |
 | `GET` | `/uploads/{id}/thumbnail` | текущее JPEG-превью |
 | `POST` | `/uploads/{id}/thumbnail` | пересоздать превью из кадра на секунде `t` (JSON `{"t": <sec>}`) |
 | `GET` | `/tags` | объединённый список всех тегов (для автодополнения) |
@@ -68,6 +72,53 @@ curl -X POST http://motion/jobs -d '{"video_url":
   "http://camera_upload:8000/uploads/<id>/proxy?fps=4&width=480&gray=1"}'
 ```
 
+### Владение результатами camera-motion
+
+`camera-upload` — единственный долговременный владелец диапазонов, в которых
+камера была неподвижна. Последний успешно принятый результат хранится в поле
+`analysis` соответствующей записи `{id}.exports.json` и доступен через список
+и detail endpoint экспортов. Наличие этого поля определяет бейдж `analyzed` в
+UI; отдельный presence-запрос к camera-motion не используется.
+
+```json
+{
+  "id": "export-id",
+  "fps": 4,
+  "width": 480,
+  "gray": true,
+  "analysis": {
+    "schema_version": 1,
+    "analysis_id": "7f83b47e-5f97-4b24-a5e0-2c02b8ca1527",
+    "started_at": 1783844400,
+    "created_at": 1783844515,
+    "source": {"fps": 4, "width": 480, "gray": true},
+    "duration": 20,
+    "parameters": {
+      "method": "affine", "mask": true, "roi": "full", "enter": 2,
+      "settle": 0.5, "settle_samples": 2, "min_segment": 1,
+      "features": 500, "min_inliers": 20
+    },
+    "segments": [
+      {"start": 0, "end": 8, "kind": "stable"},
+      {"start": 8, "end": 20, "kind": "transition"}
+    ]
+  }
+}
+```
+
+Camera-motion получает доверенный источник через
+`/uploads/{id}/exports/{exportId}/proxy`: параметры `fps`, `width` и `gray`
+берутся из сохранённой версии, а query-переопределения игнорируются. Запись
+анализа требует точный заголовок `Authorization: Bearer <CAMERA_INTERNAL_TOKEN>`;
+тело ограничено 2 МиБ и строго валидируется. Изменение канонических настроек
+версии атомарно удаляет прежний `analysis`, повторное сохранение тех же настроек
+его сохраняет.
+
+Операции с `{id}.exports.json` сериализуются внутри процесса и записываются
+атомарной заменой файла. На один каталог данных допускается только один пишущий
+процесс `camera-upload`; для нескольких процессов потребовалась бы отдельная
+межпроцессная блокировка.
+
 Пример ответа `GET /uploads/{id}`:
 
 ```json
@@ -101,6 +152,7 @@ curl -X POST http://motion/jobs -d '{"video_url":
 | `CAMERA_MOTION_EXTERNAL_URL` | — | browser-facing URL Camera Motion |
 | `CAMERA_FISHEYE_EXTERNAL_URL` | — | browser-facing URL Camera Fisheye |
 | `CAMERA_SAM3_EXTERNAL_URL` | — | browser-facing URL Camera SAM3 |
+| `CAMERA_INTERNAL_TOKEN` | — | обязательный общий секрет для внутренних запросов camera-motion |
 
 ## Запуск локально
 

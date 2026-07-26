@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,13 +22,36 @@ import (
 func newTestServer(t *testing.T) (http.Handler, string) {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", InternalToken: "test-internal-token"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(cfg, st, tusStub, log), dir
+}
+
+func writeDuration(t *testing.T, dir, id string, duration float64) {
+	t.Helper()
+	raw := fmt.Sprintf(`{"format":{"duration":%q}}`, strconv.FormatFloat(duration, 'f', -1, 64))
+	if err := os.WriteFile(filepath.Join(dir, id+".meta.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validAnalysisJSON() string {
+	return `{"schema_version":1,"analysis_id":"7f83b47e-5f97-4b24-a5e0-2c02b8ca1527","started_at":100,"source":{"fps":4,"width":480,"gray":true},"duration":20,"parameters":{"method":"affine","mask":true,"roi":"full","enter":2,"settle":0.5,"settle_samples":2,"min_segment":1,"features":500,"min_inliers":20},"segments":[{"start":0,"end":8,"kind":"stable"},{"start":8,"end":10,"kind":"transition"},{"start":10,"end":20,"kind":"stable"}]}`
+}
+
+func analysisReq(srv http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
 }
 
 func writeUpload(t *testing.T, dir, id string, size, offset int64) {
@@ -75,9 +100,32 @@ func TestClientServed(t *testing.T) {
 	}
 }
 
+func TestClientReadsAnalysisBadgeLocally(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "!!rec.analysis") {
+		t.Error("local analysis badge missing")
+	}
+	if strings.Contains(body, "'/results?ids='") {
+		t.Error("legacy presence request remains")
+	}
+}
+
+func TestClientUsesCanonicalVersionProxyURL(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "'/exports/' + rec.id + '/proxy'") {
+		t.Error("export row does not use the canonical version-proxy URL")
+	}
+}
+
 func TestClientInjectsCameraMotionURL(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraMotionExternalURL: "http://motion.example:7000"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraMotionExternalURL: "http://motion.example:7000", InternalToken: "test-internal-token"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -96,7 +144,7 @@ func TestClientInjectsCameraMotionURL(t *testing.T) {
 
 func TestClientInjectsCameraFisheyeURL(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraFisheyeExternalURL: "http://fisheye.example:7400"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraFisheyeExternalURL: "http://fisheye.example:7400", InternalToken: "test-internal-token"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -115,7 +163,7 @@ func TestClientInjectsCameraFisheyeURL(t *testing.T) {
 
 func TestClientInjectsCameraSAM3URL(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500", InternalToken: "test-internal-token"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -134,7 +182,7 @@ func TestClientInjectsCameraSAM3URL(t *testing.T) {
 
 func TestClientOpensCameraSAM3ObjectSearch(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500"}
+	cfg := config.Config{DataDir: dir, BasePath: "/files/", CameraSAM3ExternalURL: "http://sam3.example:8500", InternalToken: "test-internal-token"}
 	st := store.New(dir)
 	tusStub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -236,6 +284,168 @@ func TestGetSingleExport(t *testing.T) {
 
 	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/nope", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("get missing record: status = %d", rec.Code)
+	}
+}
+
+func TestPutExportAnalysisRequiresExactBearerToken(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/uploads/vid1/exports/" + cfg.ID + "/analysis"
+
+	for _, token := range []string{"", "wrong-token", "test-internal-token "} {
+		rec := analysisReq(srv, http.MethodPut, path, validAnalysisJSON(), token)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("token %q: status = %d, want 401", token, rec.Code)
+		}
+	}
+}
+
+func TestPutExportAnalysisPersistsAuthorizedResult(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+cfg.ID+"/analysis", validAnalysisJSON(), "test-internal-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got store.ExportConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Analysis == nil || got.Analysis.AnalysisID == "" || got.Analysis.Duration != 20 {
+		t.Fatalf("analysis response = %+v", got.Analysis)
+	}
+
+	rec = doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+cfg.ID, "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Analysis == nil {
+		t.Fatal("analysis missing from export detail")
+	}
+}
+
+func TestPutExportAnalysisReturnsNotFound(t *testing.T) {
+	srv, dir := newTestServer(t)
+	if rec := analysisReq(srv, http.MethodPut, "/uploads/missing/exports/nope/analysis", validAnalysisJSON(), "test-internal-token"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing upload: status = %d, want 404", rec.Code)
+	}
+
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	if rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/nope/analysis", validAnalysisJSON(), "test-internal-token"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing export: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestPutExportAnalysisRejectsInvalidJSONBodies(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/uploads/vid1/exports/" + cfg.ID + "/analysis"
+	unknown := strings.Replace(validAnalysisJSON(), `"schema_version":1`, `"schema_version":1,"unexpected":true`, 1)
+	trailing := validAnalysisJSON() + `{}`
+	overflow := validAnalysisJSON() + strings.Repeat(" ", (2<<20)+1)
+
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{name: "malformed", body: `{"schema_version":`},
+		{name: "unknown field", body: unknown},
+		{name: "trailing json", body: trailing},
+		{name: "over two mebibytes", body: overflow},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := analysisReq(srv, http.MethodPut, path, tt.body, "test-internal-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestPutExportAnalysisMapsInvalidAndConflict(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/uploads/vid1/exports/" + cfg.ID + "/analysis"
+
+	invalid := strings.Replace(validAnalysisJSON(), `"schema_version":1`, `"schema_version":2`, 1)
+	if rec := analysisReq(srv, http.MethodPut, path, invalid, "test-internal-token"); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid: status = %d, want 400", rec.Code)
+	}
+	conflict := strings.Replace(validAnalysisJSON(), `"fps":4`, `"fps":5`, 1)
+	if rec := analysisReq(srv, http.MethodPut, path, conflict, "test-internal-token"); rec.Code != http.StatusConflict {
+		t.Errorf("conflict: status = %d, want 409", rec.Code)
+	}
+
+	newer := strings.Replace(validAnalysisJSON(), `"started_at":100`, `"started_at":200`, 1)
+	newer = strings.Replace(newer, "7f83b47e-5f97-4b24-a5e0-2c02b8ca1527", "9a8f7266-b7ad-491d-b269-5b8e34c516c1", 1)
+	if rec := analysisReq(srv, http.MethodPut, path, newer, "test-internal-token"); rec.Code != http.StatusOK {
+		t.Fatalf("newer: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	older := strings.Replace(validAnalysisJSON(), "7f83b47e-5f97-4b24-a5e0-2c02b8ca1527", "00f1bd70-2cf0-4a31-a76f-e11d0ed79ecf", 1)
+	if rec := analysisReq(srv, http.MethodPut, path, older, "test-internal-token"); rec.Code != http.StatusConflict {
+		t.Errorf("older: status = %d, want 409", rec.Code)
+	}
+}
+
+func TestVersionProxyUsesStoredSettingsAndIgnoresQuery(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	st := store.New(dir)
+	cfg, err := st.UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("canonical-version-proxy")
+	if err := os.WriteFile(st.ProxyPath("vid1", 4, 480, true), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+cfg.ID+"/proxy?fps=60&width=1920&gray=false", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), want) {
+		t.Fatalf("body = %q, want stored proxy %q", rec.Body.Bytes(), want)
+	}
+}
+
+func TestFreeFormProxyUsesCanonicalNormalization(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	st := store.New(dir)
+	want := []byte("normalized-free-form-proxy")
+	if err := os.WriteFile(st.ProxyPath("vid1", 0.1, 64, false), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doReq(srv, http.MethodGet, "/uploads/vid1/proxy?fps=0.01&width=1&gray=false", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), want) {
+		t.Fatalf("body = %q, want normalized proxy %q", rec.Body.Bytes(), want)
 	}
 }
 

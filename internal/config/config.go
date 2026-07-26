@@ -28,6 +28,8 @@ type Config struct {
 	CameraFisheyeExternalURL string
 	// CameraSAM3ExternalURL is the browser-facing base URL of camera-sam3.
 	CameraSAM3ExternalURL string
+	// InternalToken authenticates service-to-service analysis delivery.
+	InternalToken string
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
@@ -49,6 +51,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.CameraSAM3ExternalURL, err = requireEnv("CAMERA_SAM3_EXTERNAL_URL"); err != nil {
+		return Config{}, err
+	}
+	if cfg.InternalToken, err = requireEnv("CAMERA_INTERNAL_TOKEN"); err != nil {
 		return Config{}, err
 	}
 

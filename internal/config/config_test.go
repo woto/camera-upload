@@ -10,10 +10,13 @@ func setRequiredExternalURLs(t *testing.T) {
 	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
 	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
 	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "http://sam3.example")
+	t.Setenv("CAMERA_INTERNAL_TOKEN", "test-internal-token")
 }
 
 func TestLoadRequiresCameraMotionExternalURL(t *testing.T) {
 	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
+	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "http://sam3.example")
+	t.Setenv("CAMERA_INTERNAL_TOKEN", "test-internal-token")
 	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "")
 
 	_, err := Load()
@@ -27,6 +30,8 @@ func TestLoadRequiresCameraMotionExternalURL(t *testing.T) {
 
 func TestLoadRequiresCameraFisheyeExternalURL(t *testing.T) {
 	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
+	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "http://sam3.example")
+	t.Setenv("CAMERA_INTERNAL_TOKEN", "test-internal-token")
 	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "")
 
 	_, err := Load()
@@ -54,15 +59,31 @@ func TestLoadReadsExternalURLs(t *testing.T) {
 	if cfg.CameraSAM3ExternalURL != "http://sam3.example" {
 		t.Fatalf("CameraSAM3ExternalURL = %q", cfg.CameraSAM3ExternalURL)
 	}
+	if cfg.InternalToken != "test-internal-token" {
+		t.Fatalf("InternalToken = %q", cfg.InternalToken)
+	}
 }
 
 func TestLoadRequiresCameraSAM3ExternalURL(t *testing.T) {
 	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
 	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
+	t.Setenv("CAMERA_INTERNAL_TOKEN", "test-internal-token")
 	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "")
 
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "CAMERA_SAM3_EXTERNAL_URL") {
 		t.Fatalf("Load() error = %v, want missing CAMERA_SAM3_EXTERNAL_URL", err)
+	}
+}
+
+func TestLoadRequiresInternalToken(t *testing.T) {
+	t.Setenv("CAMERA_MOTION_EXTERNAL_URL", "http://motion.example")
+	t.Setenv("CAMERA_FISHEYE_EXTERNAL_URL", "http://fisheye.example")
+	t.Setenv("CAMERA_SAM3_EXTERNAL_URL", "http://sam3.example")
+	t.Setenv("CAMERA_INTERNAL_TOKEN", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "CAMERA_INTERNAL_TOKEN") {
+		t.Fatalf("Load() error = %v, want missing CAMERA_INTERNAL_TOKEN", err)
 	}
 }

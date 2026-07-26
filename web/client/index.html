@@ -419,16 +419,7 @@
         listEl.innerHTML = '<p class="muted">No videos yet. Click “+ Add video”.</p>';
         return;
       }
-      // Ask camera-motion which of these records already have an analysis result,
-      // so each row can show a present/absent badge.
-      let present = {};
-      if (CAMERA_MOTION_EXTERNAL_URL) {
-        try {
-          const ids = exports.map(r => r.id).join(',');
-          present = await (await fetch(CAMERA_MOTION_EXTERNAL_URL + '/results?ids=' + encodeURIComponent(ids))).json();
-        } catch (e) {}
-      }
-      exports.forEach(rec => listEl.appendChild(exportRow(id, box, rec, !!present[rec.id])));
+      exports.forEach(rec => listEl.appendChild(exportRow(id, box, rec, !!rec.analysis)));
     }
 
     // One editable export record (params + proxy URL + actions).
@@ -456,13 +447,8 @@
       const urlBox = wrap.querySelector('[data-url]');
       const openLink = wrap.querySelector('[data-open]');
       f.value = rec.fps; w.value = rec.width; g.checked = rec.gray;
-      const proxyUrl = () => {
-        const ff = parseFloat(f.value) || 4, ww = parseInt(w.value, 10) || 480, gg = g.checked ? 1 : 0;
-        return location.origin + '/uploads/' + id + '/proxy?fps=' + ff + '&width=' + ww + '&gray=' + gg;
-      };
+      const proxyUrl = () => location.origin + '/uploads/' + id + '/exports/' + rec.id + '/proxy';
       const refresh = () => { const u = proxyUrl(); urlBox.value = u; openLink.href = u; };
-      [f, w].forEach(el => el.oninput = refresh);
-      g.onchange = refresh;
       refresh();
       wrap.querySelector('[data-copy]').onclick = e => copyButton(e.currentTarget, urlBox.value, 'Proxy URL (for camera-motion):');
       wrap.querySelector('[data-motion]').onclick = () =>
