@@ -373,11 +373,20 @@ func validateMotionAnalysis(cfg ExportConfig, input MotionAnalysisInput, authori
 	if !isFinitePositive(p.Enter) {
 		return invalidAnalysis("enter must be finite and positive")
 	}
+	if p.Enter > 100 {
+		return invalidAnalysis("enter exceeds maximum")
+	}
 	if !isFiniteNonnegative(p.Settle) || !isFiniteNonnegative(p.MinSegment) {
 		return invalidAnalysis("settle and min_segment must be finite and nonnegative")
 	}
+	if p.Settle > 100 || p.MinSegment > 86400 {
+		return invalidAnalysis("settle or min_segment exceeds maximum")
+	}
 	if p.SettleSamples <= 0 || p.Features <= 0 || p.MinInliers <= 0 {
 		return invalidAnalysis("analysis counters must be positive")
+	}
+	if p.SettleSamples > 1000 || p.Features > 100000 || p.MinInliers > 100000 {
+		return invalidAnalysis("analysis counter exceeds maximum")
 	}
 	if len(input.Segments) == 0 || len(input.Segments) > MaxMotionSegments {
 		return invalidAnalysis("invalid segment count")

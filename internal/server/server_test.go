@@ -570,6 +570,59 @@ func TestPutExportAnalysisMapsInvalidAndConflict(t *testing.T) {
 	}
 }
 
+func TestPutExportAnalysisEnforcesParameterUpperBounds(t *testing.T) {
+	newTarget := func(t *testing.T) (http.Handler, string) {
+		t.Helper()
+		srv, dir := newTestServer(t)
+		writeUpload(t, dir, "vid1", 100, 100)
+		writeDuration(t, dir, "vid1", 20)
+		cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return srv, "/uploads/vid1/exports/" + cfg.ID + "/analysis"
+	}
+
+	for _, tt := range []struct {
+		name string
+		old  string
+		over string
+	}{
+		{name: "enter", old: `"enter":2`, over: `"enter":100.000001`},
+		{name: "settle", old: `"settle":0.5`, over: `"settle":100.000001`},
+		{name: "settle samples", old: `"settle_samples":2`, over: `"settle_samples":1001`},
+		{name: "min segment", old: `"min_segment":1`, over: `"min_segment":86400.000001`},
+		{name: "features", old: `"features":500`, over: `"features":100001`},
+		{name: "min inliers", old: `"min_inliers":20`, over: `"min_inliers":100001`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, path := newTarget(t)
+			body := strings.Replace(validAnalysisJSON(), tt.old, tt.over, 1)
+			rec := analysisReq(srv, http.MethodPut, path, body, "test-internal-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	srv, path := newTarget(t)
+	maxima := validAnalysisJSON()
+	for _, replacement := range [][2]string{
+		{`"enter":2`, `"enter":100`},
+		{`"settle":0.5`, `"settle":100`},
+		{`"settle_samples":2`, `"settle_samples":1000`},
+		{`"min_segment":1`, `"min_segment":86400`},
+		{`"features":500`, `"features":100000`},
+		{`"min_inliers":20`, `"min_inliers":100000`},
+	} {
+		maxima = strings.Replace(maxima, replacement[0], replacement[1], 1)
+	}
+	rec := analysisReq(srv, http.MethodPut, path, maxima, "test-internal-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("exact maxima status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestVersionProxyUsesStoredSettingsAndIgnoresQuery(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "vid1", 100, 100)

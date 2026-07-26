@@ -106,13 +106,19 @@ func TestSetExportAnalysisRejectsInvalidInput(t *testing.T) {
 		{name: "roi", mutate: func(in *MotionAnalysisInput) { in.Parameters.ROI = "middle" }},
 		{name: "enter", mutate: func(in *MotionAnalysisInput) { in.Parameters.Enter = 0 }},
 		{name: "enter nan", mutate: func(in *MotionAnalysisInput) { in.Parameters.Enter = math.NaN() }},
+		{name: "enter over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.Enter = 100.000001 }},
 		{name: "settle negative", mutate: func(in *MotionAnalysisInput) { in.Parameters.Settle = -1 }},
 		{name: "settle infinity", mutate: func(in *MotionAnalysisInput) { in.Parameters.Settle = math.Inf(1) }},
+		{name: "settle over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.Settle = 100.000001 }},
 		{name: "settle samples", mutate: func(in *MotionAnalysisInput) { in.Parameters.SettleSamples = 0 }},
+		{name: "settle samples over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.SettleSamples = 1001 }},
 		{name: "min segment negative", mutate: func(in *MotionAnalysisInput) { in.Parameters.MinSegment = -1 }},
 		{name: "min segment nan", mutate: func(in *MotionAnalysisInput) { in.Parameters.MinSegment = math.NaN() }},
+		{name: "min segment over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.MinSegment = 86400.000001 }},
 		{name: "features", mutate: func(in *MotionAnalysisInput) { in.Parameters.Features = 0 }},
+		{name: "features over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.Features = 100001 }},
 		{name: "min inliers", mutate: func(in *MotionAnalysisInput) { in.Parameters.MinInliers = 0 }},
+		{name: "min inliers over max", mutate: func(in *MotionAnalysisInput) { in.Parameters.MinInliers = 100001 }},
 		{name: "empty segments", mutate: func(in *MotionAnalysisInput) { in.Segments = nil }},
 		{name: "too many segments", mutate: func(in *MotionAnalysisInput) { in.Segments = make([]MotionSegment, MaxMotionSegments+1) }},
 		{name: "segment kind", mutate: func(in *MotionAnalysisInput) { in.Segments[0].Kind = "moving" }},
@@ -140,6 +146,30 @@ func TestSetExportAnalysisRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("error=%v, want ErrInvalidAnalysis", err)
 			}
 		})
+	}
+}
+
+func TestSetExportAnalysisAcceptsParameterUpperBounds(t *testing.T) {
+	dir := t.TempDir()
+	writeUpload(t, dir, "vid1", 100, 100, "clip.mp4")
+	s := New(dir)
+	cfg, err := s.UpsertExport("vid1", ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validAnalysisInput()
+	input.Parameters.Enter = 100
+	input.Parameters.Settle = 100
+	input.Parameters.SettleSamples = 1000
+	input.Parameters.MinSegment = 86400
+	input.Parameters.Features = 100000
+	input.Parameters.MinInliers = 100000
+	stored, err := s.SetExportAnalysis("vid1", cfg.ID, input, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Analysis == nil || stored.Analysis.Parameters != input.Parameters {
+		t.Fatalf("upper bounds not stored exactly: %+v", stored.Analysis)
 	}
 }
 
