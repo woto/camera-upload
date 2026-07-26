@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,7 +23,31 @@ var ErrNotFound = errors.New("upload not found")
 // Store provides read access to uploads and their sidecar files within a
 // single data directory shared with tusd's filestore.
 type Store struct {
-	dir string
+	dir         string
+	exportLocks uploadKeyedMutex
+}
+
+// uploadKeyedMutex serializes export-sidecar access per upload while allowing
+// unrelated uploads to proceed independently.
+type uploadKeyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func (m *uploadKeyedMutex) lock(id string) func() {
+	m.mu.Lock()
+	if m.locks == nil {
+		m.locks = make(map[string]*sync.Mutex)
+	}
+	lock := m.locks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.locks[id] = lock
+	}
+	m.mu.Unlock()
+
+	lock.Lock()
+	return lock.Unlock
 }
 
 // New returns a Store rooted at the given data directory.
