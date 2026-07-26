@@ -401,14 +401,19 @@ func TestPutExportAnalysisReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestPutExportAnalysisReturnsUnavailableWithoutAuthoritativeDuration(t *testing.T) {
+func TestPutExportAnalysisChecksExportBeforeDurationAvailability(t *testing.T) {
 	corruptMetadata := `{"format":`
 	for _, tt := range []struct {
-		name string
-		meta *string
+		name           string
+		meta           *string
+		exportState    string
+		wantStatusCode int
 	}{
-		{name: "missing metadata"},
-		{name: "corrupt metadata", meta: &corruptMetadata},
+		{name: "existing export and missing metadata", exportState: "exists", wantStatusCode: http.StatusServiceUnavailable},
+		{name: "existing export and corrupt metadata", meta: &corruptMetadata, exportState: "exists", wantStatusCode: http.StatusServiceUnavailable},
+		{name: "missing export and missing metadata", exportState: "missing", wantStatusCode: http.StatusNotFound},
+		{name: "missing export and corrupt metadata", meta: &corruptMetadata, exportState: "missing", wantStatusCode: http.StatusNotFound},
+		{name: "corrupt exports and missing metadata", exportState: "corrupt", wantStatusCode: http.StatusInternalServerError},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, dir := newTestServer(t)
@@ -418,21 +423,35 @@ func TestPutExportAnalysisReturnsUnavailableWithoutAuthoritativeDuration(t *test
 					t.Fatal(err)
 				}
 			}
-			cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
-			if err != nil {
-				t.Fatal(err)
+			exportID := "missing"
+			switch tt.exportState {
+			case "exists":
+				cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				exportID = cfg.ID
+			case "corrupt":
+				if err := os.WriteFile(filepath.Join(dir, "vid1.exports.json"), []byte(`[{`), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
-			rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+cfg.ID+"/analysis", validAnalysisJSON(), "test-internal-token")
-			if rec.Code != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+exportID+"/analysis", validAnalysisJSON(), "test-internal-token")
+			if rec.Code != tt.wantStatusCode {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatusCode, rec.Body.String())
 			}
 			var response map[string]string
 			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if response["error"] != "video metadata unavailable" {
-				t.Errorf("error = %q, want generic unavailable message", response["error"])
+			wantError := map[int]string{
+				http.StatusNotFound:            "export not found",
+				http.StatusInternalServerError: "internal error",
+				http.StatusServiceUnavailable:  "video metadata unavailable",
+			}[tt.wantStatusCode]
+			if response["error"] != wantError {
+				t.Errorf("error = %q, want %q", response["error"], wantError)
 			}
 		})
 	}

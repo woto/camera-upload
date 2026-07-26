@@ -235,11 +235,23 @@ func (s *Server) putExportAnalysis(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "get upload for analysis")
 		return
 	}
+	exportID := chi.URLParam(r, "exportId")
+	_, exportExists, err := s.store.Export(uploadID, exportID)
+	if err != nil {
+		s.notFoundOrError(w, err, "get export for analysis")
+		return
+	}
+	if !exportExists {
+		writeError(w, http.StatusNotFound, "export not found")
+		return
+	}
 	if upload.Duration <= 0 || math.IsNaN(upload.Duration) || math.IsInf(upload.Duration, 0) {
 		writeError(w, http.StatusServiceUnavailable, "video metadata unavailable")
 		return
 	}
-	cfg, err := s.store.SetExportAnalysis(uploadID, chi.URLParam(r, "exportId"), input, upload.Duration)
+	// SetExportAnalysis rechecks existence and source settings under the export
+	// lock, so deletion or mutation after the preflight retains its 404/409 map.
+	cfg, err := s.store.SetExportAnalysis(uploadID, exportID, input, upload.Duration)
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, cfg)
