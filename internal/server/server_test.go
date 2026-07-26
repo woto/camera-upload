@@ -252,11 +252,11 @@ func TestExportRecordsCRUD(t *testing.T) {
 	}
 	var updated store.ExportConfig
 	_ = json.Unmarshal(rec.Body.Bytes(), &updated)
-	if updated.ID != created.ID || updated.FPS != 8 || updated.Width != 640 {
+	if updated.ID == created.ID || updated.FPS != 8 || updated.Width != 640 {
 		t.Fatalf("update not applied: %+v", updated)
 	}
 
-	rec = doReq(srv, http.MethodDelete, "/uploads/vid1/exports/"+created.ID, "")
+	rec = doReq(srv, http.MethodDelete, "/uploads/vid1/exports/"+updated.ID, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete status = %d", rec.Code)
 	}
@@ -272,6 +272,45 @@ func TestExportRecordsCRUD(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &listResp)
 	if len(listResp.Exports) != 0 {
 		t.Errorf("expected empty after delete, got %+v", listResp.Exports)
+	}
+}
+
+func TestUpdateExportRotatesHTTPIdentityAndRejectsOldDelivery(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+
+	rec := doReq(srv, http.MethodPost, "/uploads/vid1/exports", `{"fps":4,"width":480,"gray":true}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+	var created store.ExportConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = doReq(srv, http.MethodPut, "/uploads/vid1/exports/"+created.ID, `{"fps":8,"width":640,"gray":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated store.ExportConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID == "" || updated.ID == created.ID {
+		t.Fatalf("update response did not rotate identity: old=%s updated=%+v", created.ID, updated)
+	}
+	if updated.CreatedAt <= created.CreatedAt {
+		t.Fatalf("update response did not refresh created_at: old=%d new=%d", created.CreatedAt, updated.CreatedAt)
+	}
+	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+created.ID, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("old detail status = %d, want 404", rec.Code)
+	}
+	if rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+created.ID+"/analysis", validAnalysisJSON(), "test-internal-token"); rec.Code != http.StatusNotFound {
+		t.Fatalf("old analysis delivery status = %d, want 404", rec.Code)
+	}
+	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+updated.ID, ""); rec.Code != http.StatusOK {
+		t.Fatalf("new detail status = %d, want 200", rec.Code)
 	}
 }
 
@@ -540,7 +579,7 @@ func TestVersionProxyUsesStoredSettingsAndIgnoresQuery(t *testing.T) {
 	}
 }
 
-func TestVersionProxyDoesNotReuseValidatorsAfterSettingsChange(t *testing.T) {
+func TestVersionProxyRotatesIdentityAfterSettingsChange(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "vid1", 100, 100)
 	st := store.New(dir)
@@ -570,8 +609,12 @@ func TestVersionProxyDoesNotReuseValidatorsAfterSettingsChange(t *testing.T) {
 		t.Fatal("first response has no Last-Modified validator")
 	}
 
-	if _, err := st.UpsertExport("vid1", store.ExportConfig{ID: cfg.ID, FPS: 8, Width: 640, Gray: false}); err != nil {
+	updated, err := st.UpsertExport("vid1", store.ExportConfig{ID: cfg.ID, FPS: 8, Width: 640, Gray: false})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if updated.ID == cfg.ID {
+		t.Fatalf("source update retained old id: %s", cfg.ID)
 	}
 	newPath := st.ProxyPath("vid1", 8, 640, false)
 	want := []byte("new-version-proxy")
@@ -584,16 +627,24 @@ func TestVersionProxyDoesNotReuseValidatorsAfterSettingsChange(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	req.Header.Set("If-Modified-Since", validator)
-	second := httptest.NewRecorder()
-	srv.ServeHTTP(second, req)
-	if second.Code != http.StatusOK {
-		t.Fatalf("conditional status = %d, want 200", second.Code)
+	old := httptest.NewRecorder()
+	srv.ServeHTTP(old, req)
+	if old.Code != http.StatusNotFound {
+		t.Fatalf("old identity status = %d, want 404", old.Code)
 	}
-	if got := second.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("conditional Cache-Control = %q, want no-store", got)
+
+	req = httptest.NewRequest(http.MethodGet, "/uploads/vid1/exports/"+updated.ID+"/proxy", nil)
+	req.Header.Set("If-Modified-Since", validator)
+	current := httptest.NewRecorder()
+	srv.ServeHTTP(current, req)
+	if current.Code != http.StatusOK {
+		t.Fatalf("current identity status = %d, want 200", current.Code)
 	}
-	if !bytes.Equal(second.Body.Bytes(), want) {
-		t.Fatalf("conditional body = %q, want %q", second.Body.Bytes(), want)
+	if got := current.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("current Cache-Control = %q, want no-store", got)
+	}
+	if !bytes.Equal(current.Body.Bytes(), want) {
+		t.Fatalf("current body = %q, want %q", current.Body.Bytes(), want)
 	}
 }
 

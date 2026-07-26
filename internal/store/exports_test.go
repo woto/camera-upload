@@ -192,6 +192,9 @@ func TestUpsertExportAnalysisRetentionAndInvalidation(t *testing.T) {
 	if !reflect.DeepEqual(same.Analysis, withAnalysis.Analysis) {
 		t.Fatalf("identical canonical settings did not preserve analysis: %+v", same)
 	}
+	if same.ID != cfg.ID {
+		t.Fatalf("identical canonical settings rotated id: %s -> %s", cfg.ID, same.ID)
+	}
 	changed, err := s.UpsertExport("vid1", ExportConfig{ID: cfg.ID, FPS: 5, Width: 480, Gray: true, Analysis: forged})
 	if err != nil {
 		t.Fatal(err)
@@ -199,12 +202,75 @@ func TestUpsertExportAnalysisRetentionAndInvalidation(t *testing.T) {
 	if changed.Analysis != nil {
 		t.Fatalf("changed settings retained/injected analysis: %+v", changed)
 	}
+	if changed.ID == cfg.ID {
+		t.Fatalf("changed settings retained old id: %+v", changed)
+	}
+	if changed.CreatedAt <= same.CreatedAt {
+		t.Fatalf("changed settings did not refresh created_at: old=%d new=%d", same.CreatedAt, changed.CreatedAt)
+	}
 	created, err := s.UpsertExport("vid1", ExportConfig{FPS: 4, Width: 480, Analysis: forged})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.Analysis != nil {
 		t.Fatalf("create injected caller analysis: %+v", created)
+	}
+}
+
+func TestUpsertExportRotatesIdentityAcrossSourceABA(t *testing.T) {
+	dir := t.TempDir()
+	writeUpload(t, dir, "vid1", 100, 100, "clip.mp4")
+	s := New(dir)
+	s1, err := s.UpsertExport("vid1", ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetExportAnalysis("vid1", s1.ID, validAnalysisInput(), 20); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := s.UpsertExport("vid1", ExportConfig{ID: s1.ID, FPS: 8, Width: 640, Gray: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.ID == s1.ID || s2.Analysis != nil {
+		t.Fatalf("S1 -> S2 did not rotate cleanly: S1=%+v S2=%+v", s1, s2)
+	}
+	if s2.CreatedAt <= s1.CreatedAt {
+		t.Fatalf("S2 created_at=%d, want after S1=%d", s2.CreatedAt, s1.CreatedAt)
+	}
+	if _, ok, err := s.Export("vid1", s1.ID); err != nil || ok {
+		t.Fatalf("old S1 id survived: ok=%v err=%v", ok, err)
+	}
+	if _, err := s.SetExportAnalysis("vid1", s1.ID, validAnalysisInput(), 20); !errors.Is(err, ErrExportNotFound) {
+		t.Fatalf("delivery to old S1 id: %v", err)
+	}
+
+	s1Again, err := s.UpsertExport("vid1", ExportConfig{ID: s2.ID, FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s1Again.ID == s1.ID || s1Again.ID == s2.ID {
+		t.Fatalf("S1 -> S2 -> S1 reused identity: %s, %s, %s", s1.ID, s2.ID, s1Again.ID)
+	}
+	if s1Again.CreatedAt <= s2.CreatedAt {
+		t.Fatalf("new S1 created_at=%d, want after S2=%d", s1Again.CreatedAt, s2.CreatedAt)
+	}
+	if _, ok, err := s.Export("vid1", s2.ID); err != nil || ok {
+		t.Fatalf("old S2 id survived: ok=%v err=%v", ok, err)
+	}
+	staleS2 := validAnalysisInput()
+	staleS2.AnalysisID = "353eea14-c0d5-4919-baf5-ab7783f7dd16"
+	staleS2.Source = ExportSource{FPS: 8, Width: 640, Gray: false}
+	if _, err := s.SetExportAnalysis("vid1", s2.ID, staleS2, 20); !errors.Is(err, ErrExportNotFound) {
+		t.Fatalf("delivery to old S2 id: %v", err)
+	}
+	list, err := s.Exports("vid1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != s1Again.ID || list[0].Analysis != nil {
+		t.Fatalf("unexpected current export after ABA: %+v", list)
 	}
 }
 
@@ -348,11 +414,12 @@ func TestConcurrentExportUpdateAndAnalysisDelivery(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(2)
+		var updated ExportConfig
 		var updateErr, deliveryErr error
 		go func() {
 			defer wg.Done()
 			<-start
-			_, updateErr = s.UpsertExport("vid1", ExportConfig{ID: cfg.ID, FPS: 5, Width: 480, Gray: true})
+			updated, updateErr = s.UpsertExport("vid1", ExportConfig{ID: cfg.ID, FPS: 5, Width: 480, Gray: true})
 		}()
 		go func() {
 			defer wg.Done()
@@ -364,10 +431,16 @@ func TestConcurrentExportUpdateAndAnalysisDelivery(t *testing.T) {
 		if updateErr != nil {
 			t.Fatal(updateErr)
 		}
-		if deliveryErr != nil && !errors.Is(deliveryErr, ErrExportConflict) {
+		if deliveryErr != nil && !errors.Is(deliveryErr, ErrExportNotFound) {
 			t.Fatalf("delivery error=%v", deliveryErr)
 		}
-		got, ok, err := s.Export("vid1", cfg.ID)
+		if updated.ID == cfg.ID {
+			t.Fatalf("update retained old id: %+v", updated)
+		}
+		if _, ok, err := s.Export("vid1", cfg.ID); err != nil || ok {
+			t.Fatalf("old export survived update: ok=%v err=%v", ok, err)
+		}
+		got, ok, err := s.Export("vid1", updated.ID)
 		if err != nil || !ok {
 			t.Fatalf("reload: ok=%v err=%v", ok, err)
 		}
@@ -492,8 +565,8 @@ func TestUpsertExportUpdatesByID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.ID != first.ID {
-		t.Errorf("id changed on update: %s -> %s", first.ID, updated.ID)
+	if updated.ID == first.ID {
+		t.Errorf("id did not change on source update: %s", first.ID)
 	}
 	list, _ := s.Exports("vid1")
 	if len(list) != 1 {

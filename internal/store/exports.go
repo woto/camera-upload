@@ -131,7 +131,7 @@ func (s *Store) UpsertExport(id string, cfg ExportConfig) (ExportConfig, error) 
 		return ExportConfig{}, err
 	}
 	if cfg.ID == "" {
-		cfg.ID = newExportID()
+		cfg.ID = newUniqueExportID(list)
 		cfg.CreatedAt = time.Now().Unix()
 		list = append(list, cfg)
 	} else {
@@ -140,9 +140,12 @@ func (s *Store) UpsertExport(id string, cfg ExportConfig) (ExportConfig, error) 
 			if list[i].ID != cfg.ID {
 				continue
 			}
-			cfg.CreatedAt = list[i].CreatedAt
 			if sameExportSource(cfg, list[i]) {
+				cfg.CreatedAt = list[i].CreatedAt
 				cfg.Analysis = list[i].Analysis
+			} else {
+				cfg.ID = newUniqueExportID(list)
+				cfg.CreatedAt = nextExportCreatedAt(list[i].CreatedAt)
 			}
 			list[i] = cfg
 			found = true
@@ -452,6 +455,30 @@ func isUUIDShaped(value string) bool {
 
 func isHex(value byte) bool {
 	return value >= '0' && value <= '9' || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
+}
+
+func newUniqueExportID(list []ExportConfig) string {
+	for {
+		id := newExportID()
+		unique := true
+		for _, cfg := range list {
+			if cfg.ID == id {
+				unique = false
+				break
+			}
+		}
+		if unique {
+			return id
+		}
+	}
+}
+
+func nextExportCreatedAt(previous int64) int64 {
+	now := time.Now().Unix()
+	if now <= previous {
+		return previous + 1
+	}
+	return now
 }
 
 func newExportID() string {
