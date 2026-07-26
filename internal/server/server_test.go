@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/woto/camera-upload/internal/config"
 	"github.com/woto/camera-upload/internal/store"
@@ -120,6 +121,16 @@ func TestClientUsesCanonicalVersionProxyURL(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "'/exports/' + rec.id + '/proxy'") {
 		t.Error("export row does not use the canonical version-proxy URL")
+	}
+}
+
+func TestClientRefreshesExportAfterSavingSettings(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/client", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "if (response.ok) await renderExports(id, box);") {
+		t.Error("saving export settings does not refresh the row from the returned server state")
 	}
 }
 
@@ -390,6 +401,43 @@ func TestPutExportAnalysisReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestPutExportAnalysisReturnsUnavailableWithoutAuthoritativeDuration(t *testing.T) {
+	corruptMetadata := `{"format":`
+	for _, tt := range []struct {
+		name string
+		meta *string
+	}{
+		{name: "missing metadata"},
+		{name: "corrupt metadata", meta: &corruptMetadata},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, dir := newTestServer(t)
+			writeUpload(t, dir, "vid1", 100, 100)
+			if tt.meta != nil {
+				if err := os.WriteFile(filepath.Join(dir, "vid1.meta.json"), []byte(*tt.meta), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+cfg.ID+"/analysis", validAnalysisJSON(), "test-internal-token")
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var response map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["error"] != "video metadata unavailable" {
+				t.Errorf("error = %q, want generic unavailable message", response["error"])
+			}
+		})
+	}
+}
+
 func TestPutExportAnalysisRejectsInvalidJSONBodies(t *testing.T) {
 	srv, dir := newTestServer(t)
 	writeUpload(t, dir, "vid1", 100, 100)
@@ -470,6 +518,63 @@ func TestVersionProxyUsesStoredSettingsAndIgnoresQuery(t *testing.T) {
 	}
 	if !bytes.Equal(rec.Body.Bytes(), want) {
 		t.Fatalf("body = %q, want stored proxy %q", rec.Body.Bytes(), want)
+	}
+}
+
+func TestVersionProxyDoesNotReuseValidatorsAfterSettingsChange(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	st := store.New(dir)
+	cfg, err := st.UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixedTime := time.Unix(1_700_000_000, 0)
+	oldPath := st.ProxyPath("vid1", 4, 480, true)
+	if err := os.WriteFile(oldPath, []byte("old-version-proxy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(oldPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+	url := "/uploads/vid1/exports/" + cfg.ID + "/proxy"
+
+	first := doReq(srv, http.MethodGet, url, "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	if got := first.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("first Cache-Control = %q, want no-store", got)
+	}
+	validator := first.Header().Get("Last-Modified")
+	if validator == "" {
+		t.Fatal("first response has no Last-Modified validator")
+	}
+
+	if _, err := st.UpsertExport("vid1", store.ExportConfig{ID: cfg.ID, FPS: 8, Width: 640, Gray: false}); err != nil {
+		t.Fatal(err)
+	}
+	newPath := st.ProxyPath("vid1", 8, 640, false)
+	want := []byte("new-version-proxy")
+	if err := os.WriteFile(newPath, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("If-Modified-Since", validator)
+	second := httptest.NewRecorder()
+	srv.ServeHTTP(second, req)
+	if second.Code != http.StatusOK {
+		t.Fatalf("conditional status = %d, want 200", second.Code)
+	}
+	if got := second.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("conditional Cache-Control = %q, want no-store", got)
+	}
+	if !bytes.Equal(second.Body.Bytes(), want) {
+		t.Fatalf("conditional body = %q, want %q", second.Body.Bytes(), want)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -234,6 +235,10 @@ func (s *Server) putExportAnalysis(w http.ResponseWriter, r *http.Request) {
 		s.notFoundOrError(w, err, "get upload for analysis")
 		return
 	}
+	if upload.Duration <= 0 || math.IsNaN(upload.Duration) || math.IsInf(upload.Duration, 0) {
+		writeError(w, http.StatusServiceUnavailable, "video metadata unavailable")
+		return
+	}
 	cfg, err := s.store.SetExportAnalysis(uploadID, chi.URLParam(r, "exportId"), input, upload.Duration)
 	switch {
 	case err == nil:
@@ -450,6 +455,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 // exportProxy serves the canonical proxy for a saved export version. Query
 // overrides are intentionally ignored: stored settings define the media.
 func (s *Server) exportProxy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	id := chi.URLParam(r, "id")
 	if _, ok := s.requireReadyID(w, id); !ok {
 		return
@@ -463,7 +469,15 @@ func (s *Server) exportProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "export not found")
 		return
 	}
-	s.serveProxy(w, r, id, cfg)
+	// The same version URL can resolve to a new cache file after its settings
+	// change. Old validators must therefore never turn the new representation
+	// into a 304 response.
+	request := r.Clone(r.Context())
+	request.Header = r.Header.Clone()
+	for _, header := range []string{"If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "If-Range"} {
+		request.Header.Del(header)
+	}
+	s.serveProxy(w, request, id, cfg)
 }
 
 func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request, id string, cfg store.ExportConfig) {

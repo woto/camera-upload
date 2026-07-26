@@ -454,12 +454,10 @@
       wrap.querySelector('[data-motion]').onclick = () =>
         window.open(CAMERA_MOTION_EXTERNAL_URL + '/client?upload=' + encodeURIComponent(location.origin) +
           '&upload_id=' + encodeURIComponent(id) + '&export_id=' + encodeURIComponent(rec.id), '_blank', 'noopener');
-      wrap.querySelector('[data-save]').onclick = async e => {
-        const btn = e.currentTarget;
-        await api('PUT', '/uploads/' + id + '/exports/' + rec.id,
+      wrap.querySelector('[data-save]').onclick = async () => {
+        const response = await api('PUT', '/uploads/' + id + '/exports/' + rec.id,
           { fps: parseFloat(f.value) || 4, width: parseInt(w.value, 10) || 480, gray: g.checked });
-        btn.textContent = 'Saved ✓';
-        setTimeout(() => { btn.textContent = 'Save'; }, 1200);
+        if (response.ok) await renderExports(id, box);
       };
       wrap.querySelector('[data-del]').onclick = async () => {
         await api('DELETE', '/uploads/' + id + '/exports/' + rec.id);
