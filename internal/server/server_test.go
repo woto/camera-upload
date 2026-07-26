@@ -306,11 +306,24 @@ func TestUpdateExportRotatesHTTPIdentityAndRejectsOldDelivery(t *testing.T) {
 	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+created.ID, ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("old detail status = %d, want 404", rec.Code)
 	}
+	if rec := doReq(srv, http.MethodPut, "/uploads/vid1/exports/"+created.ID, `{"fps":4,"width":480,"gray":true}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("stale update status = %d, want 404", rec.Code)
+	}
 	if rec := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+created.ID+"/analysis", validAnalysisJSON(), "test-internal-token"); rec.Code != http.StatusNotFound {
 		t.Fatalf("old analysis delivery status = %d, want 404", rec.Code)
 	}
 	if rec := doReq(srv, http.MethodGet, "/uploads/vid1/exports/"+updated.ID, ""); rec.Code != http.StatusOK {
 		t.Fatalf("new detail status = %d, want 200", rec.Code)
+	}
+	rec = doReq(srv, http.MethodGet, "/uploads/vid1/exports", "")
+	var list struct {
+		Exports []store.ExportConfig `json:"exports"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Exports) != 1 || list.Exports[0].ID != updated.ID {
+		t.Fatalf("stale update changed export list: %+v", list.Exports)
 	}
 }
 

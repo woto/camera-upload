@@ -684,6 +684,10 @@ func (s *Server) notFoundOrError(w http.ResponseWriter, err error, op string) {
 		writeError(w, http.StatusNotFound, "upload not found")
 		return
 	}
+	if errors.Is(err, store.ErrExportNotFound) {
+		writeError(w, http.StatusNotFound, "export not found")
+		return
+	}
 	s.log.Error(op, "err", err)
 	writeError(w, http.StatusInternalServerError, "internal error")
 }

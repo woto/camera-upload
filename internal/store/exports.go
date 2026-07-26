@@ -152,8 +152,7 @@ func (s *Store) UpsertExport(id string, cfg ExportConfig) (ExportConfig, error) 
 			break
 		}
 		if !found {
-			cfg.CreatedAt = time.Now().Unix()
-			list = append(list, cfg)
+			return ExportConfig{}, ErrExportNotFound
 		}
 	}
 	if err := s.writeExports(id, list); err != nil {

@@ -245,6 +245,16 @@ func TestUpsertExportRotatesIdentityAcrossSourceABA(t *testing.T) {
 	if _, err := s.SetExportAnalysis("vid1", s1.ID, validAnalysisInput(), 20); !errors.Is(err, ErrExportNotFound) {
 		t.Fatalf("delivery to old S1 id: %v", err)
 	}
+	if _, err := s.UpsertExport("vid1", ExportConfig{ID: s1.ID, FPS: 4, Width: 480, Gray: true}); !errors.Is(err, ErrExportNotFound) {
+		t.Fatalf("stale update to old S1 id: %v", err)
+	}
+	list, err := s.Exports("vid1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != s2.ID {
+		t.Fatalf("stale update resurrected old S1: %+v", list)
+	}
 
 	s1Again, err := s.UpsertExport("vid1", ExportConfig{ID: s2.ID, FPS: 4, Width: 480, Gray: true})
 	if err != nil {
@@ -265,12 +275,69 @@ func TestUpsertExportRotatesIdentityAcrossSourceABA(t *testing.T) {
 	if _, err := s.SetExportAnalysis("vid1", s2.ID, staleS2, 20); !errors.Is(err, ErrExportNotFound) {
 		t.Fatalf("delivery to old S2 id: %v", err)
 	}
-	list, err := s.Exports("vid1")
+	list, err = s.Exports("vid1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list) != 1 || list[0].ID != s1Again.ID || list[0].Analysis != nil {
 		t.Fatalf("unexpected current export after ABA: %+v", list)
+	}
+}
+
+func TestConcurrentExportUpdatesFromSameIdentityAllowOneWinner(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		dir := t.TempDir()
+		writeUpload(t, dir, "vid1", 100, 100, "clip.mp4")
+		s := New(dir)
+		original, err := s.UpsertExport("vid1", ExportConfig{FPS: 4, Width: 480, Gray: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		results := make([]ExportConfig, 2)
+		errs := make([]error, 2)
+		for worker := range 2 {
+			worker := worker
+			go func() {
+				defer wg.Done()
+				<-start
+				results[worker], errs[worker] = s.UpsertExport("vid1", ExportConfig{
+					ID: original.ID, FPS: float64(8 + worker), Width: 640 + worker, Gray: false,
+				})
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		winner := -1
+		for worker, err := range errs {
+			switch {
+			case err == nil:
+				if winner != -1 {
+					t.Fatalf("both stale updates succeeded: %+v", results)
+				}
+				winner = worker
+			case errors.Is(err, ErrExportNotFound):
+			default:
+				t.Fatalf("update %d error=%v", worker, err)
+			}
+		}
+		if winner == -1 {
+			t.Fatalf("neither update succeeded: %v", errs)
+		}
+		if results[winner].ID == original.ID {
+			t.Fatalf("winner retained original id: %+v", results[winner])
+		}
+		list, err := s.Exports("vid1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(list) != 1 || list[0].ID != results[winner].ID || list[0].ID == original.ID {
+			t.Fatalf("unexpected list after concurrent updates: %+v", list)
+		}
 	}
 }
 
