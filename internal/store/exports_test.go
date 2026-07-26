@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -328,6 +329,16 @@ func TestAtomicExportWriteFailurePreservesPriorSidecar(t *testing.T) {
 	}
 }
 
+func TestSyncParentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := syncParentDirectory(filepath.Join(dir, "exports.json")); err != nil {
+		t.Fatalf("sync existing parent: %v", err)
+	}
+	if err := syncParentDirectory(filepath.Join(dir, "missing", "exports.json")); err == nil {
+		t.Fatal("sync missing parent unexpectedly succeeded")
+	}
+}
+
 func TestConcurrentExportUpdateAndAnalysisDelivery(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		dir := t.TempDir()
@@ -397,6 +408,48 @@ func TestConcurrentExportDeleteAndAnalysisDelivery(t *testing.T) {
 		}
 		if _, ok, err := s.Export("vid1", cfg.ID); err != nil || ok {
 			t.Fatalf("deleted export resurrected: ok=%v err=%v", ok, err)
+		}
+	}
+}
+
+func TestConcurrentUploadDeleteAndAnalysisDeliveryDoesNotOrphanExports(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		dir := t.TempDir()
+		writeUpload(t, dir, "vid1", 100, 100, "clip.mp4")
+		s := New(dir)
+		cfg, err := s.UpsertExport("vid1", ExportConfig{FPS: 4, Width: 480, Gray: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var deleteErr, deliveryErr error
+		go func() {
+			defer wg.Done()
+			<-start
+			deleteErr = s.Delete("vid1")
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, deliveryErr = s.SetExportAnalysis("vid1", cfg.ID, validAnalysisInput(), 20)
+		}()
+		close(start)
+		wg.Wait()
+
+		if deleteErr != nil {
+			t.Fatal(deleteErr)
+		}
+		if deliveryErr != nil && !errors.Is(deliveryErr, ErrNotFound) {
+			t.Fatalf("delivery error=%v, want nil or ErrNotFound", deliveryErr)
+		}
+		if _, err := os.Stat(s.InfoPath("vid1")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("upload info survived delete: %v", err)
+		}
+		if _, err := os.Stat(s.ExportsPath("vid1")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("orphan export sidecar survived delete: %v", err)
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,6 +123,152 @@ func TestDelete(t *testing.T) {
 	if err := s.Delete("x"); err != ErrNotFound {
 		t.Errorf("second delete: expected ErrNotFound, got %v", err)
 	}
+}
+
+func TestDeleteWaitsForExportOperations(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	writeUpload(t, dir, "x", 10, 10, "x.mp4")
+	if _, err := s.UpsertExport("x", ExportConfig{FPS: 4, Width: 480}); err != nil {
+		t.Fatal(err)
+	}
+
+	release := s.exportLocks.lock("x")
+	released := false
+	defer func() {
+		if !released {
+			release()
+		}
+	}()
+	deleted := make(chan error, 1)
+	go func() { deleted <- s.Delete("x") }()
+	waitForLockRefs(t, &s.exportLocks, "x", 2)
+	select {
+	case err := <-deleted:
+		t.Fatalf("Delete returned while the export lock was held: %v", err)
+	default:
+	}
+	release()
+	released = true
+	select {
+	case err := <-deleted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Delete did not finish after the export lock was released")
+	}
+}
+
+func TestUploadKeyedMutexKeepsWaitersOnOneEntryAndCleansUp(t *testing.T) {
+	var locks uploadKeyedMutex
+	firstRelease := locks.lock("same")
+
+	secondAcquired := make(chan struct{})
+	secondRelease := make(chan struct{})
+	secondDone := make(chan struct{})
+	go func() {
+		release := locks.lock("same")
+		close(secondAcquired)
+		<-secondRelease
+		release()
+		close(secondDone)
+	}()
+	waitForLockRefs(t, &locks, "same", 2)
+	firstRelease()
+	select {
+	case <-secondAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("first waiter did not acquire the keyed lock")
+	}
+	waitForLockRefs(t, &locks, "same", 1)
+
+	thirdAcquired := make(chan struct{})
+	thirdRelease := make(chan struct{})
+	thirdDone := make(chan struct{})
+	go func() {
+		release := locks.lock("same")
+		close(thirdAcquired)
+		<-thirdRelease
+		release()
+		close(thirdDone)
+	}()
+	waitForLockRefs(t, &locks, "same", 2)
+	select {
+	case <-thirdAcquired:
+		t.Fatal("a second keyed lock was created while the current holder was active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(secondRelease)
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("second holder did not release")
+	}
+	select {
+	case <-thirdAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("second waiter did not acquire the keyed lock")
+	}
+	waitForLockRefs(t, &locks, "same", 1)
+	close(thirdRelease)
+	select {
+	case <-thirdDone:
+	case <-time.After(time.Second):
+		t.Fatal("third holder did not release")
+	}
+
+	locks.mu.Lock()
+	defer locks.mu.Unlock()
+	if len(locks.locks) != 0 {
+		t.Fatalf("released keyed lock was retained: %+v", locks.locks)
+	}
+}
+
+func TestStoreExportLocksAreCleanedAfterOperations(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	for i := 0; i < 100; i++ {
+		if _, err := s.Exports(fmt.Sprintf("missing-%d", i)); err != ErrNotFound {
+			t.Fatalf("missing export list %d: %v", i, err)
+		}
+	}
+	writeUpload(t, dir, "x", 10, 10, "x.mp4")
+	cfg, err := s.UpsertExport("x", ExportConfig{FPS: 4, Width: 480})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Export("x", cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteExport("x", cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	s.exportLocks.mu.Lock()
+	defer s.exportLocks.mu.Unlock()
+	if len(s.exportLocks.locks) != 0 {
+		t.Fatalf("export lock table retained inactive IDs: %+v", s.exportLocks.locks)
+	}
+}
+
+func waitForLockRefs(t *testing.T, locks *uploadKeyedMutex, id string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		locks.mu.Lock()
+		entry := locks.locks[id]
+		got := 0
+		if entry != nil {
+			got = entry.refs
+		}
+		locks.mu.Unlock()
+		if got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("lock %q did not reach ref count %d", id, want)
 }
 
 func TestSetUserMetaAndTags(t *testing.T) {

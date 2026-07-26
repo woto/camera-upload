@@ -297,6 +297,24 @@ func (s *Store) writeExports(id string, list []ExportConfig) (err error) {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace exports: %w", err)
 	}
+	if err := syncParentDirectory(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func syncParentDirectory(path string) error {
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("open exports parent directory: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync exports parent directory: %w", err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close exports parent directory: %w", err)
+	}
 	return nil
 }
 

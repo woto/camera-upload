@@ -31,23 +31,37 @@ type Store struct {
 // unrelated uploads to proceed independently.
 type uploadKeyedMutex struct {
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*uploadLockEntry
+}
+
+type uploadLockEntry struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func (m *uploadKeyedMutex) lock(id string) func() {
 	m.mu.Lock()
 	if m.locks == nil {
-		m.locks = make(map[string]*sync.Mutex)
+		m.locks = make(map[string]*uploadLockEntry)
 	}
-	lock := m.locks[id]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		m.locks[id] = lock
+	entry := m.locks[id]
+	if entry == nil {
+		entry = &uploadLockEntry{}
+		m.locks[id] = entry
 	}
+	entry.refs++
 	m.mu.Unlock()
 
-	lock.Lock()
-	return lock.Unlock
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		m.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(m.locks, id)
+		}
+		m.mu.Unlock()
+	}
 }
 
 // New returns a Store rooted at the given data directory.
@@ -314,6 +328,9 @@ func normalizeTags(tags []string) []string {
 // Delete removes an upload's data file and all associated sidecars. It is
 // idempotent with respect to already-missing files.
 func (s *Store) Delete(id string) error {
+	unlock := s.exportLocks.lock(id)
+	defer unlock()
+
 	if _, err := os.Stat(s.InfoPath(id)); errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
