@@ -335,6 +335,48 @@ func TestPutExportAnalysisPersistsAuthorizedResult(t *testing.T) {
 	}
 }
 
+func TestPutExportAnalysisRoundTripsThroughExportList(t *testing.T) {
+	srv, dir := newTestServer(t)
+	writeUpload(t, dir, "vid1", 100, 100)
+	writeDuration(t, dir, "vid1", 20)
+	cfg, err := store.New(dir).UpsertExport("vid1", store.ExportConfig{FPS: 4, Width: 480, Gray: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	put := analysisReq(srv, http.MethodPut, "/uploads/vid1/exports/"+cfg.ID+"/analysis", validAnalysisJSON(), "test-internal-token")
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", put.Code, put.Body.String())
+	}
+
+	list := doReq(srv, http.MethodGet, "/uploads/vid1/exports", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("GET list status = %d, body = %s", list.Code, list.Body.String())
+	}
+	var response struct {
+		Exports []store.ExportConfig `json:"exports"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Exports) != 1 {
+		t.Fatalf("exports = %+v, want one record", response.Exports)
+	}
+	analysis := response.Exports[0].Analysis
+	if analysis == nil {
+		t.Fatal("analysis missing from export list")
+	}
+	if analysis.AnalysisID != "7f83b47e-5f97-4b24-a5e0-2c02b8ca1527" {
+		t.Errorf("analysis_id = %q", analysis.AnalysisID)
+	}
+	if len(analysis.Segments) != 3 || analysis.Segments[0].Kind != "stable" || analysis.Segments[2].End != 20 {
+		t.Errorf("segments = %+v", analysis.Segments)
+	}
+	if analysis.CreatedAt <= 0 {
+		t.Errorf("created_at = %d, want positive server timestamp", analysis.CreatedAt)
+	}
+}
+
 func TestPutExportAnalysisReturnsNotFound(t *testing.T) {
 	srv, dir := newTestServer(t)
 	if rec := analysisReq(srv, http.MethodPut, "/uploads/missing/exports/nope/analysis", validAnalysisJSON(), "test-internal-token"); rec.Code != http.StatusNotFound {
