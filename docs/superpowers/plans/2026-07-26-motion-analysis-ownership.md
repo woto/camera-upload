@@ -197,7 +197,7 @@ r.Get("/{id}/exports/{exportId}/proxy", s.exportProxy)
 r.Put("/{id}/exports/{exportId}/analysis", s.putExportAnalysis)
 ```
 
-Authenticate analysis writes with constant-time comparison of `Authorization: Bearer ...`; cap bodies using `http.MaxBytesReader(w, r.Body, 2<<20)`; use `DisallowUnknownFields` and reject trailing JSON. Read authoritative duration through `Store.Get`, call `SetExportAnalysis`, and map errors to 400/404/409. Refactor proxy serving so the free-form route normalizes through `store.NormalizeExport` and the version route ignores query overrides and uses stored canonical settings.
+Authenticate analysis writes with constant-time comparison of `Authorization: Bearer <token>`; cap bodies using `http.MaxBytesReader(w, r.Body, 2<<20)`; use `DisallowUnknownFields` and reject trailing JSON. Read authoritative duration through `Store.Get`, call `SetExportAnalysis`, and map errors to 400/404/409. Refactor proxy serving so the free-form route normalizes through `store.NormalizeExport` and the version route ignores query overrides and uses stored canonical settings.
 
 - [ ] **Step 4: Replace the remote badge and document ownership**
 
@@ -271,6 +271,13 @@ Expected: FAIL because the client and new contract do not exist.
 Create:
 
 ```python
+import time
+import uuid
+from dataclasses import dataclass
+from urllib.parse import quote
+
+import httpx
+
 @dataclass(frozen=True)
 class ExportSource:
     fps: float
@@ -286,10 +293,64 @@ class AnalysisDestination:
     analysis_id: str
     started_at: float
 
+class AnalysisDeliveryError(RuntimeError):
+    pass
+
 class CameraUploadClient:
-    def __init__(self, base_url: str, token: str, *, transport=None, timeout=10.0, attempts=3): ...
-    def resolve(self, upload_id: str, export_id: str) -> AnalysisDestination: ...
-    def deliver(self, destination: AnalysisDestination, result: AnalysisResult, parameters: dict) -> dict: ...
+    def __init__(self, base_url: str, token: str, *, transport=None, timeout=10.0, attempts=3):
+        self.base_url = base_url.rstrip("/")
+        self.attempts = attempts
+        self.client = httpx.Client(transport=transport, timeout=timeout)
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+    def resolve(self, upload_id: str, export_id: str) -> AnalysisDestination:
+        upload = quote(upload_id, safe="")
+        export = quote(export_id, safe="")
+        response = self.client.get(
+            f"{self.base_url}/uploads/{upload}/exports/{export}", headers=self.headers
+        )
+        if not response.is_success:
+            raise AnalysisDeliveryError(f"camera-upload export lookup failed: HTTP {response.status_code}")
+        data = response.json()
+        source = ExportSource(fps=float(data["fps"]), width=int(data["width"]), gray=bool(data["gray"]))
+        return AnalysisDestination(
+            upload_id=upload_id,
+            export_id=export_id,
+            video_url=f"{self.base_url}/uploads/{upload}/exports/{export}/proxy",
+            source=source,
+            analysis_id=str(uuid.uuid4()),
+            started_at=time.time(),
+        )
+
+    def deliver(self, destination: AnalysisDestination, result: AnalysisResult, parameters: dict) -> dict:
+        payload = {
+            "schema_version": 1,
+            "analysis_id": destination.analysis_id,
+            "started_at": destination.started_at,
+            "source": destination.source.__dict__,
+            "duration": result.duration,
+            "parameters": {
+                "method": parameters["method"], "mask": parameters["mask"], "roi": parameters["roi"],
+                "enter": parameters["enter_pct"], "settle": parameters["settle_pct"],
+                "settle_samples": parameters["settle_samples"], "min_segment": parameters["min_segment_s"],
+                "features": parameters["n_features"], "min_inliers": parameters["min_inliers"],
+            },
+            "segments": [{"start": s.start, "end": s.end, "kind": s.kind} for s in result.segments],
+        }
+        upload = quote(destination.upload_id, safe="")
+        export = quote(destination.export_id, safe="")
+        url = f"{self.base_url}/uploads/{upload}/exports/{export}/analysis"
+        last_error = None
+        for _ in range(self.attempts):
+            try:
+                response = self.client.put(url, headers=self.headers, json=payload)
+            except httpx.TransportError as exc:
+                last_error = exc
+                continue
+            if response.is_success:
+                return response.json()
+            raise AnalysisDeliveryError(f"camera-upload rejected analysis: HTTP {response.status_code}")
+        raise AnalysisDeliveryError(f"camera-upload delivery failed: {last_error}")
 ```
 
 `resolve` performs authenticated internal export lookup and builds the canonical version-proxy URL. `deliver` maps `enter_pct/settle_pct/min_segment_s/n_features` to `enter/settle/min_segment/features`, omits transition metrics, retries only transport failures with the same UUID, and raises `AnalysisDeliveryError` with concise response detail for final failures.
