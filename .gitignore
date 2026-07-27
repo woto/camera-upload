@@ -1,5 +1,6 @@
 /data/
 /.worktrees/
+/.superpowers/
 /server
 *.log
 .env
